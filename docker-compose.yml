@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # MariaDB Database Service
+  db:
+    image: mariadb:10.6
+    container_name: facturatie_db
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: facturatie
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: Admin123!
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - facturatie_network
+
+  # FossBilling Application Service
+  app:
+    image: fossbilling/fossbilling:latest
+    container_name: facturatie_app
+    depends_on:
+      - db
+    ports:
+      - "30081:80"
+    environment:
+      DB_HOST: db
+      DB_NAME: facturatie
+      DB_USER: admin
+      DB_PASSWORD: Admin123!
+    volumes:
+      - app_data:/var/www/html
+    networks:
+      - facturatie_network
+
+  # phpMyAdmin Service (for database management)
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: facturatie_phpmyadmin
+    depends_on:
+      - db
+    ports:
+      - "30082:80"  # Access phpMyAdmin at http://localhost:8082
+    environment:
+      PMA_HOST: db
+      PMA_USER: admin
+      PMA_PASSWORD: Admin123!
+    networks:
+      - facturatie_network
+
+networks:
+  facturatie_network:
+    driver: bridge
+
+volumes:
+  db_data:
+  app_data:
