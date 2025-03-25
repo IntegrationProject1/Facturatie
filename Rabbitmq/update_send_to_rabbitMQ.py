@@ -1,13 +1,15 @@
 import pika
+import os
+from dotenv import load_dotenv
 
 def send_update_user_to_rabbitmq(xml_message):
     # Establish a connection to RabbitMQ
-    connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+    connection = pika.BlockingConnection(pika.ConnectionParameters(ip_address = os.getenv("IP_ADDRESS")))
     channel = connection.channel()
     
     # Publish the XML message to the queue
     # Gaat hier ook aanpassing nodig zijn voor de routing key
-    channel.basic_publish(exchange='', routing_key='facturatie_user_update', body=xml_message)
+    channel.basic_publish(exchange='', routing_key='facturatie.user.update', body=xml_message)
     
     print("User update message sent to RabbitMQ queue")
     

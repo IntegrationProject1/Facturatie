@@ -1,16 +1,14 @@
 import pika
+import os
+from dotenv import load_dotenv
 
 def send_delete_user_to_rabbitmq(xml_message):
     # Establish a connection to RabbitMQ
-    connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+    connection = pika.BlockingConnection(pika.ConnectionParameters(ip_address = os.getenv("IP_ADDRESS")))
     channel = connection.channel()
     
-    # Declare the queue (if it doesn't already exist)
-    # Gaat moeten aangepast worden eens dat de queues opgesteld zijn
-    channel.queue_declare(queue='user_queue')
-    
     # Publish the XML message to the queue
-    channel.basic_publish(exchange='', routing_key='user_queue', body=xml_message)
+    channel.basic_publish(exchange='', routing_key='facturatie.user.delete', body=xml_message)
     # Gaat hier ook aanpassing nodig zijn voor de routing key
     
     print("User deletion message sent to RabbitMQ queue")

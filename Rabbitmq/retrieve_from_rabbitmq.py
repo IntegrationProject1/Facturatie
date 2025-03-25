@@ -1,8 +1,10 @@
 import pika
+import os
+from dotenv import load_dotenv
 
 # Ophalen uit RabbitMQ
 def retrieve_from_rabbitmq():
-    connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+    connection = pika.BlockingConnection(pika.ConnectionParameters(ip_address = os.getenv("IP_ADDRESS")))
     channel = connection.channel()
     channel.queue_declare(queue='user_queue')
 
