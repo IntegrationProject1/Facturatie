@@ -19,10 +19,10 @@ def update_user_from_xml(xml_message):
 
     # Connect to the MySQL database
     conn = mysql.connector.connect(
-        host="localhost",
-        user="jouwuser",
-        password="jouwwachtwoord",
-        database="jouwdb"
+        host="db",
+        user="admin",
+        password="Admin123!",
+        database="facturatie"
     )
     
     cursor = conn.cursor()

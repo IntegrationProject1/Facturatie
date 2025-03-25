@@ -5,13 +5,9 @@ def send_update_user_to_rabbitmq(xml_message):
     connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
     channel = connection.channel()
     
-    # Declare the queue (if it doesn't already exist)
-    # Gaat moeten aangepast worden eens dat de queues opgesteld zijn
-    channel.queue_declare(queue='user_queue')
-    
     # Publish the XML message to the queue
     # Gaat hier ook aanpassing nodig zijn voor de routing key
-    channel.basic_publish(exchange='', routing_key='user_queue', body=xml_message)
+    channel.basic_publish(exchange='', routing_key='facturatie_user_update', body=xml_message)
     
     print("User update message sent to RabbitMQ queue")
     
