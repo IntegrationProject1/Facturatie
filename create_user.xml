@@ -1,0 +1,18 @@
+
+<?xml version="1.0" encoding="UTF-8"?>
+<UserMessage>
+    <ActionType>CreateUser</ActionType>
+    <UserID>67890</UserID>
+    <TimeOfAction>2025-03-25T15:00:00</TimeOfAction>
+    <FirstName>Amine</FirstName>
+    <LastName>Zerouali</LastName>
+    <PhoneNumber>+32456789012</PhoneNumber>
+    <EmailAddress>amine@example.com</EmailAddress>
+    <Business>
+        <BusinessName>AZ Web Solutions</BusinessName>
+        <BusinessEmail>contact@azwebsolutions.com</BusinessEmail>
+        <RealAddress>Brussels, Belgium</RealAddress>
+        <BTWNumber>BE123456789</BTWNumber>
+        <FacturationAddress>Brussels, Belgium</FacturationAddress>
+    </Business>
+</UserMessage>
