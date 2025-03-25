@@ -1,12 +1,15 @@
 import mysql.connector
+from dotenv import load_dotenv
+import os
 
 def delete_user_from_database(user_id):
     # Connect to the MySQL database
     conn = mysql.connector.connect(
-        host="db",
-        user="admin",
-        password="Admin123!",
-        database="facturatie"
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+        # gaat moeten aangepast worden zodat credentials niet open zijn voor iedereen
     )
     
     cursor = conn.cursor()

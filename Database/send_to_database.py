@@ -1,12 +1,14 @@
 import mysql.connector
+from dotenv import load_dotenv
+import os
 
 def send_to_database(xml_message):
     try:
         conn = mysql.connector.connect(
-            host="db",
-            user="admin",
-            password="Admin123!",
-            database="facturatie"
+            host=os.getenv("DB_HOST"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            database=os.getenv("DB_NAME")
         )
         
         cursor = conn.cursor()
