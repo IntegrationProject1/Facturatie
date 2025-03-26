@@ -24,7 +24,7 @@ services:
     ports:
       - "30081:80"
     environment:
-      DB_HOST: ${DB_HOST}
+      DB_HOST: db
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
@@ -42,7 +42,7 @@ services:
     ports:
       - "30082:80"
     environment:
-      PMA_HOST: ${DB_HOST}
+      PMA_HOST: db
       PMA_USER: ${DB_USER}
       PMA_PASSWORD: ${DB_PASSWORD}
     networks:
@@ -56,7 +56,7 @@ services:
     depends_on:
       - db
     environment:
-      DB_HOST: ${DB_HOST}
+      DB_HOST: db
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
