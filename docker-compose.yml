@@ -63,7 +63,7 @@ services:
       RABBITMQ_HOST: integrationproject-2425s2-001.westeurope.cloudapp.azure.com
       RABBITMQ_PORT: 30020
       RABBITMQ_USER: ehbstudent
-      RABBITMQ_PASS: wpqjf9mI3DKZdZDaa!
+      RABBITMQ_PASSWORD: wpqjf9mI3DKZdZDaa!
     networks:
       - facturatie_network
 
