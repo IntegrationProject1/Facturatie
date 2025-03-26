@@ -48,6 +48,25 @@ services:
     networks:
       - facturatie_network
 
+  # NEW: User Creation Listener Service
+  user-listener:
+    build: ./user-creation-listener
+    container_name: facturatie_user_listener
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_NAME: facturatie
+      DB_USER: admin
+      DB_PASSWORD: Admin123!
+      RABBITMQ_HOST: integrationproject-2425s2-001.westeurope.cloudapp.azure.com
+      RABBITMQ_PORT: 30020
+      RABBITMQ_USER: ehbstudent
+      RABBITMQ_PASS: wpqjf9mI3DKZdZDaa!
+    networks:
+      - facturatie_network
+
 networks:
   facturatie_network:
     driver: bridge
