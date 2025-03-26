@@ -93,24 +93,24 @@ def create_xml_message(user):
         ET.SubElement(xml, "EmailAddress").text = user['email']
     
     # Business info (only if VAT or business name exists)
-    if user.get('btw_number') or user.get('business_name'):
+    if any(user.get(field) for field in ['business_name', 'btw_number', 'real_address']):
         business = ET.SubElement(xml, "Business")
         
         if user.get('business_name'):
             ET.SubElement(business, "BusinessName").text = user['business_name']
         
-        # Business email falls back to personal email
-        business_email = user.get('email', '')
+        # Business email (fallback to personal email)
+        business_email = user.get('email', '')  # Using personal email as fallback
         if business_email:
             ET.SubElement(business, "BusinessEmail").text = business_email
         
+        # Only include fields that exist
         if user.get('real_address'):
             ET.SubElement(business, "RealAddress").text = user['real_address']
-        
         if user.get('btw_number'):
             ET.SubElement(business, "BTWNumber").text = user['btw_number']
         
-        # Facturation address falls back to real address
+        # Facturation address (fallback to real address)
         facturation_address = user.get('real_address', '')
         if facturation_address:
             ET.SubElement(business, "FacturationAddress").text = facturation_address
