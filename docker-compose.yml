@@ -76,9 +76,23 @@ services:
     networks:
       - facturatie_network
 
+#User Deletion Listener Service
+  user-deletion-listener:
+    build: ./user-deletion-listener
+    container_name: facturatie_deletion_listener
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
 networks:
   facturatie_network:
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: facturatie_net
+    attachable: true
 
 volumes:
   db_data:
