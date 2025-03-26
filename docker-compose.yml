@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  # MariaDB Database Service
+  # MySQL Database Service
   db:
     image: mysql:8.0
     container_name: facturatie_db
@@ -33,7 +31,7 @@ services:
     networks:
       - facturatie_network
 
-  # phpMyAdmin Service (for database management)
+  # phpMyAdmin Service 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
     container_name: facturatie_phpmyadmin
@@ -48,7 +46,7 @@ services:
     networks:
       - facturatie_network
 
-  # NEW: User Creation Listener Service
+  #User Creation Listener Service
   user-listener:
     build: ./user-creation-listener
     container_name: facturatie_user_listener
@@ -67,6 +65,7 @@ services:
     networks:
       - facturatie_network
 
+#User Update Listener Service
   user-update-listener:
     build: ./user-update-listener
     container_name: facturatie_update_listener
@@ -74,7 +73,6 @@ services:
     env_file: .env
     depends_on:
       - db
-      - rabbitmq
     networks:
       - facturatie_network
 
