@@ -80,7 +80,7 @@ services:
   user-deletion-listener:
     build: ./user-deletion-listener
     container_name: facturatie_deletion_listener
-    restart: unless-stopped
+    restart: unless-stopped  # Critical for auto-recovery
     env_file: .env
     depends_on:
       - db
