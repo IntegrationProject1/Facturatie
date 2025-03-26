@@ -80,7 +80,7 @@ def process_updates():
                         SELECT 
                             c.id, c.first_name, c.last_name, c.email, c.phone,
                             c.company, c.company_vat, 
-                            c.address1, c.address2, c.city, c.country, c.postcode
+                            c.address_1, c.address_2, c.city, c.country, c.postcode
                         FROM client c
                         JOIN user_updates_queue q ON c.id = q.client_id
                         WHERE q.processed = FALSE
