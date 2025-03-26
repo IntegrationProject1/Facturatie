@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 # Database connection
 def get_db_connection():
-    """Establish MySQL connection"""
     return mysql.connector.connect(
         host=os.environ["DB_HOST"],
         user=os.environ["DB_USER"],
@@ -23,46 +22,82 @@ def get_db_connection():
         database=os.environ["DB_NAME"]
     )
 
-# Process user updates from the queue and send them to RabbitMQ
+# Create XML message for RabbitMQ
+def create_complete_xml(user):
+
+    # Create XML structure with root element UserMessage
+    xml = ET.Element("UserMessage")
+    
+    # Action info
+    ET.SubElement(xml, "ActionType").text = "UPDATE"
+    ET.SubElement(xml, "UserID").text = str(user['id'])
+    ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
+    
+    # Personal info
+    if user.get('first_name'):
+        ET.SubElement(xml, "FirstName").text = user['first_name']
+    if user.get('last_name'):
+        ET.SubElement(xml, "LastName").text = user['last_name']
+    if user.get('email'):
+        ET.SubElement(xml, "EmailAddress").text = user['email']
+    if user.get('phone'):
+        ET.SubElement(xml, "PhoneNumber").text = user['phone']
+    
+    # Business info (if any exists)
+    if any(user.get(field) for field in ['company', 'company_vat', 'address1']):
+        business = ET.SubElement(xml, "Business")
+        
+        if user.get('company'):
+            ET.SubElement(business, "BusinessName").text = user['company']
+        
+        if user.get('email'):  # Fallback to user email
+            ET.SubElement(business, "BusinessEmail").text = user['email']
+        
+        if user.get('address1'):
+            address = ", ".join(filter(None, [
+                user.get('address1'),
+                user.get('address2'),
+                user.get('postcode'),
+                user.get('city'),
+                user.get('country')
+            ]))
+            ET.SubElement(business, "RealAddress").text = address
+            ET.SubElement(business, "FacturationAddress").text = address  # Same as real address unless specified
+        
+        if user.get('company_vat'):
+            ET.SubElement(business, "BTWNumber").text = user['company_vat']
+    
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')
+
+# Process updates from the queue and send to RabbitMQ
 def process_updates():
 
     while True:
         try:
-            # Get pending updates
-            conn = get_db_connection()
-            with conn.cursor(dictionary=True) as cursor:
-                cursor.execute("""
-                    SELECT c.* FROM client c
-                    JOIN user_updates_queue q ON c.id = q.client_id
-                    WHERE q.processed = FALSE
-                    ORDER BY q.updated_at
-                    LIMIT 50
-                """)
-                updates = cursor.fetchall()
+            with get_db_connection() as conn:
+                with conn.cursor(dictionary=True) as cursor:
+                    cursor.execute("""
+                        SELECT 
+                            c.id, c.first_name, c.last_name, c.email, c.phone,
+                            c.company, c.company_vat, 
+                            c.address1, c.address2, c.city, c.country, c.postcode
+                        FROM client c
+                        JOIN user_updates_queue q ON c.id = q.client_id
+                        WHERE q.processed = FALSE
+                        ORDER BY q.updated_at
+                        LIMIT 50
+                    """)
+                    updates = cursor.fetchall()
 
             if not updates:
                 time.sleep(10)
                 continue
 
-            # Process each update
             for user in updates:
-                # Generate XML
-                xml = ET.Element("UserMessage")
-                ET.SubElement(xml, "ActionType").text = "UPDATE"
-                ET.SubElement(xml, "UserID").text = str(user['id'])
-                ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
-                
-                if user.get('first_name'):
-                    ET.SubElement(xml, "FirstName").text = user['first_name']
-                if user.get('last_name'):
-                    ET.SubElement(xml, "LastName").text = user['last_name']
-                if user.get('email'):
-                    ET.SubElement(xml, "EmailAddress").text = user['email']
-                
-                xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')
-
-                # Send to RabbitMQ
                 try:
+                    xml = create_complete_xml(user)
+                    
+                    # RabbitMQ connection
                     params = pika.ConnectionParameters(
                         host=os.environ["RABBITMQ_HOST"],
                         port=int(os.environ["RABBITMQ_PORT"]),
@@ -70,14 +105,20 @@ def process_updates():
                         credentials=pika.PlainCredentials(
                             os.environ["RABBITMQ_USER"],
                             os.environ["RABBITMQ_PASSWORD"]
-                        )
+                        ),
+                        heartbeat=600
                     )
+                    
+                    # Send message to RabbitMQ
                     with pika.BlockingConnection(params) as connection:
                         channel = connection.channel()
                         channel.basic_publish(
                             exchange="user",
                             routing_key="facturatie.user.update",
-                            body=xml_str
+                            body=xml,
+                            properties=pika.BasicProperties(
+                                delivery_mode=2  # Persistent message
+                            )
                         )
                     
                     # Mark as processed
@@ -92,15 +133,22 @@ def process_updates():
                     
                     logger.info(f"Processed update for user {user['id']}")
                 
-                except Exception as e:   #error handling + logging
-                    logger.error(f"Failed to process user {user['id']}: {e}")
+                except pika.exceptions.AMQPError as e:  #error handling + logging
+                    logger.error(f"RabbitMQ error for user {user['id']}: {e}")
+                    time.sleep(5)  #wait 5 seconds before trying again to not overload RabbitMQ
+                except Exception as e:  #error handling + logging
+                    logger.error(f"Processing error for user {user['id']}: {e}")
 
-            time.sleep(5)   #every 5 seconds check for new updates to not overload the system
-
+            time.sleep(5)
+        
+        except mysql.connector.Error as e:  #error handling + logging
+            logger.error(f"Database error: {e}")
+            time.sleep(30)
         except Exception as e:  #error handling + logging
             logger.error(f"System error: {e}")
             time.sleep(60)
 
-if __name__ == "__main__":  #main function
-    logger.info("Starting user update listener")
+# Start the listener
+if __name__ == "__main__":
+    logger.info("Starting update listener with complete business fields")
     process_updates()
