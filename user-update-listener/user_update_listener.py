@@ -168,7 +168,7 @@ def initialize_database():
 # Main loop
 if __name__ == "__main__":
     initialize_database()
-    logger.info("Starting update listener with identical XML structure")
+    logger.info("Starting user update listener")
     
     while True:
         try:
