@@ -6,10 +6,10 @@ services:
     image: mysql:8.0
     container_name: facturatie_db
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: facturatie
-      MYSQL_USER: admin
-      MYSQL_PASSWORD: Admin123!
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - db_data:/var/lib/mysql
     networks:
@@ -24,10 +24,10 @@ services:
     ports:
       - "30081:80"
     environment:
-      DB_HOST: db
-      DB_NAME: facturatie
-      DB_USER: admin
-      DB_PASSWORD: Admin123!
+      DB_HOST: ${DB_HOST}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
     volumes:
       - app_data:/var/www/html
     networks:
@@ -40,11 +40,11 @@ services:
     depends_on:
       - db
     ports:
-      - "30082:80"  # Access phpMyAdmin at http://localhost:8082
+      - "30082:80"
     environment:
-      PMA_HOST: db
-      PMA_USER: admin
-      PMA_PASSWORD: Admin123!
+      PMA_HOST: ${DB_HOST}
+      PMA_USER: ${DB_USER}
+      PMA_PASSWORD: ${DB_PASSWORD}
     networks:
       - facturatie_network
 
@@ -56,14 +56,14 @@ services:
     depends_on:
       - db
     environment:
-      DB_HOST: db
-      DB_NAME: facturatie
-      DB_USER: admin
-      DB_PASSWORD: Admin123!
-      RABBITMQ_HOST: integrationproject-2425s2-001.westeurope.cloudapp.azure.com
-      RABBITMQ_PORT: 30020
-      RABBITMQ_USER: ehbstudent
-      RABBITMQ_PASSWORD: wpqjf9mI3DKZdZDaa!
+      DB_HOST: ${DB_HOST}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      RABBITMQ_HOST: ${RABBITMQ_HOST}
+      RABBITMQ_PORT: ${RABBITMQ_PORT}
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
     networks:
       - facturatie_network
 
