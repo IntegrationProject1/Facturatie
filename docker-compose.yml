@@ -89,10 +89,8 @@ services:
 
 networks:
   facturatie_network:
+    name: facturatie_network
     driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: facturatie_net
-    attachable: true
 
 volumes:
   db_data:
