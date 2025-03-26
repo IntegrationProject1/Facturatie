@@ -6,15 +6,15 @@ import mysql.connector
 import time
 import logging
 
-# Configure logging
+# For logging and debugging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+# Database connection
 def get_db_connection():
-    """Connect to MySQL using compose environment variables"""
     return mysql.connector.connect(
         host=os.environ["DB_HOST"],
         user=os.environ["DB_USER"],
@@ -22,54 +22,67 @@ def get_db_connection():
         database=os.environ["DB_NAME"]
     )
 
+# Get new users from database that have not been processed yet
 def get_new_users():
-    """Fetch unprocessed users from client table"""
+
+    # Establish connection
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     
+    # Get users that have not been processed yet and order by creation date (oldest first)
     try:
         cursor.execute("""
-            SELECT c.* FROM client c
+            SELECT 
+                c.id, c.first_name, c.last_name, c.email, c.pass, c.phone, c.created_at,
+                c.company AS business_name,
+                c.company_vat AS btw_number,
+                CONCAT_WS(', ', c.address_1, c.city, c.country) AS real_address
+            FROM client c
             LEFT JOIN processed_users p ON c.id = p.client_id
             WHERE p.client_id IS NULL
             ORDER BY c.created_at ASC
         """)
         return cursor.fetchall()
-    except mysql.connector.Error as err:
+    except mysql.connector.Error as err:        #error handling + logging
         logger.error(f"Database error: {err}")
         return []
-    finally:
+    finally:               #closing cursor and connection
         cursor.close()
         conn.close()
 
+# Mark user as processed so it won't be processed again
 def mark_as_processed(client_id):
-    """Mark user as processed"""
+
+    # Establish connection
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # Insert user into processed_users table
     try:
         cursor.execute("""
             INSERT INTO processed_users (client_id, processed_at)
             VALUES (%s, NOW())
         """, (client_id,))
         conn.commit()
-    except mysql.connector.Error as err:
+    except mysql.connector.Error as err:    #error handling + logging
         logger.error(f"Failed to mark user {client_id} as processed: {err}")
-    finally:
+    finally:           #closing cursor and connection
         cursor.close()
         conn.close()
 
+# Create XML message for RabbitMQ
 def create_xml_message(user):
-    """Generate XML from client data"""
+
+    # Create XML structure with root element UserMessage
     xml = ET.Element("UserMessage")
     
-    # Required fields
+    # Action info
     ET.SubElement(xml, "ActionType").text = "CREATE"
     ET.SubElement(xml, "UserID").text = str(user['id'])
     ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
     ET.SubElement(xml, "Password").text = user.get('pass', '')
     
-    # Optional fields
+    # Personal info
     if user.get('first_name'):
         ET.SubElement(xml, "FirstName").text = user['first_name']
     if user.get('last_name'):
@@ -79,10 +92,35 @@ def create_xml_message(user):
     if user.get('email'):
         ET.SubElement(xml, "EmailAddress").text = user['email']
     
-    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')
+    # Business info (only if VAT or business name exists)
+    if user.get('btw_number') or user.get('business_name'):
+        business = ET.SubElement(xml, "Business")
+        
+        if user.get('business_name'):
+            ET.SubElement(business, "BusinessName").text = user['business_name']
+        
+        # Business email falls back to personal email
+        business_email = user.get('email', '')
+        if business_email:
+            ET.SubElement(business, "BusinessEmail").text = business_email
+        
+        if user.get('real_address'):
+            ET.SubElement(business, "RealAddress").text = user['real_address']
+        
+        if user.get('btw_number'):
+            ET.SubElement(business, "BTWNumber").text = user['btw_number']
+        
+        # Facturation address falls back to real address
+        facturation_address = user.get('real_address', '')
+        if facturation_address:
+            ET.SubElement(business, "FacturationAddress").text = facturation_address
+    
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')    #returning the xml message
 
+# Send XML message to RabbitMQ
 def send_to_rabbitmq(xml):
-    """Send XML to RabbitMQ"""
+
+    # Establish connection to RabbitMQ
     try:
         params = pika.ConnectionParameters(
             host=os.environ["RABBITMQ_HOST"],
@@ -103,17 +141,20 @@ def send_to_rabbitmq(xml):
         channel.basic_publish(
             exchange="user",
             routing_key="facturatie.user.create",
-            body=xml
+            body=xml    #sending the xml message mentioned above in create_xml_message
         )
         
         connection.close()
         return True
-    except Exception as e:
+    except Exception as e:  #error handling + logging
         logger.error(f"RabbitMQ Error: {e}")
         return False
 
+# Initialize database for safety and to avoid errors
+# Create table processed_users if it does not exist
 def initialize_database():
-    """Create processing table if missing"""
+
+    # Establish connection
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -126,15 +167,17 @@ def initialize_database():
             )
         """)
         conn.commit()
-    except Exception as e:
+    except Exception as e:  #error handling + logging
         logger.error(f"Database initialization failed: {e}")
-    finally:
+    finally:       #closing cursor and connection
         cursor.close()
         conn.close()
 
+# Main loop
+# Get new users every 5 seconds, create XML message and send to RabbitMQ
 if __name__ == "__main__":
     initialize_database()
-    logger.info("Starting user creation listener")
+    logger.info("Starting user creation listener")  #logging
     
     while True:
         try:
@@ -148,7 +191,7 @@ if __name__ == "__main__":
                 else:
                     logger.error(f"Failed to process user {user['id']}")
             
-            time.sleep(5)
-        except Exception as e:
+            time.sleep(5)   # every 5 seconds the loop will run again to check for new users and process them
+        except Exception as e: #error handling + logging
             logger.error(f"Processing error: {e}")
-            time.sleep(60)
+            time.sleep(60)  # if there is an error, the loop will wait for 60 seconds before running again
