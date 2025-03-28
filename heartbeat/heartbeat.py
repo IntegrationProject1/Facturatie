@@ -49,11 +49,11 @@ def send_heartbeat():
     if connection:
         try:
             channel = connection.channel()
-            channel.exchange_declare(exchange="monitoring", exchange_type="fanout", durable=True) 
+            channel.exchange_declare(exchange="heartbeat", exchange_type="fanout", durable=True) 
 
             heartbeat_xml = create_heartbeat_message() # create heartbeat message
             channel.basic_publish(
-                exchange="monitoring",
+                exchange="heartbeat",
                 routing_key="",
                 body=heartbeat_xml
             )
