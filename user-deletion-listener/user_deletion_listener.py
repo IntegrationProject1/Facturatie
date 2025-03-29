@@ -25,23 +25,22 @@ def get_db_connection():
 # Get pending deletions from database that have not been processed yet
 def get_pending_deletions():
 
-    # Establish connection
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     
+    # Fetch pending deletions with basic email format validation
     try:
         cursor.execute("""
-            SELECT client_id, deleted_at 
+            SELECT client_id, email, deleted_at 
             FROM user_deletions_queue
             WHERE processed = FALSE
+            AND email IS NOT NULL
+            AND email LIKE '_%@_%._%'  -- Basic email format validation
             ORDER BY deleted_at
             LIMIT 50
         """)
         return cursor.fetchall()
-    except mysql.connector.Error as err:        #error handling + logging
-        logger.error(f"Database error: {err}")
-        return []
-    finally:               #closing cursor and connection
+    finally:
         cursor.close()
         conn.close()
 
@@ -66,42 +65,13 @@ def mark_as_processed(client_id):
         conn.close()
 
 # Create XML message for RabbitMQ from user data
-def create_deletion_xml(client_id):
-    """Generates XML only for valid emails (no client ID in output)"""
-    if not (email := get_valid_email(client_id)):
-        return None
+def create_deletion_xml(email):
 
-    try:
-        xml = ET.Element("UserMessage")
-        ET.SubElement(xml, "ActionType").text = "DELETE"
-        ET.SubElement(xml, "Email").text = email
-        ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
-        return '<?xml version="1.0"?>\n' + ET.tostring(xml, encoding='unicode')
-    except Exception as e:
-        logger.error(f"XML generation failed: {e}")
-        return None
-
-def get_valid_email(client_id):
-    """Returns only properly formatted emails or None"""
-    conn = None
-    try:
-        conn = get_db_connection()
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT email FROM client 
-                WHERE id = %s 
-                AND email IS NOT NULL 
-                AND email LIKE '_%@_%._%'
-            """, (client_id,))
-            if (result := cursor.fetchone()):
-                return result[0]
-            logger.warning(f"Invalid/missing email for client {client_id}")
-            return None
-    except Exception as e:
-        logger.error(f"Email validation error for client {client_id}: {e}")
-        return None
-    finally:
-        if conn: conn.close()
+    xml = ET.Element("UserMessage")
+    ET.SubElement(xml, "ActionType").text = "DELETE"
+    ET.SubElement(xml, "Email").text = email
+    ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
+    return '<?xml version="1.0"?>\n' + ET.tostring(xml, encoding='unicode')
 
 # Send XML message to RabbitMQ exchange for user deletion
 def send_to_rabbitmq(xml):
@@ -170,12 +140,22 @@ if __name__ == "__main__":
             deletions = get_pending_deletions()
             
             for deletion in deletions:
-                xml = create_deletion_xml(deletion['client_id'])
-                if send_to_rabbitmq(xml):
-                    mark_as_processed(deletion['client_id'])
-                    logger.info(f"Processed deletion for user {deletion['client_id']}")
-                else:
-                    logger.error(f"Failed to process deletion for user {deletion['client_id']}")
+                try:
+                    # Skip if email is invalid (already filtered in get_pending_deletions)
+                    if not deletion['email']:
+                        mark_as_processed(deletion['client_id'])
+                        continue
+                        
+                    xml = create_deletion_xml(deletion['email'])  # Use pre-queried email
+                    if xml and send_to_rabbitmq(xml):
+                        mark_as_processed(deletion['client_id'])
+                        logger.info(f"Processed deletion for {deletion['email']} (ID: {deletion['client_id']})")
+                    else:
+                        logger.error(f"Failed to send deletion for {deletion['email']}")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to process {deletion['client_id']}: {e}")
+                    mark_as_processed(deletion['client_id'])  # Prevent infinite retry
             
             time.sleep(5)   # every 5 seconds the loop will run again to check for pending deletions
         except Exception as e: #error handling + logging
