@@ -68,16 +68,20 @@ def mark_as_processed(client_id):
 # Create XML message for RabbitMQ from user data
 def create_deletion_xml(client_id):
 
-    # Create XML structure with root element UserMessage
-    xml = ET.Element("UserMessage")
-    
-    # Action info
-    ET.SubElement(xml, "ActionType").text = "DELETE"
     email = get_email_by_id(client_id)
-    ET.SubElement(xml, "Email").text = email
-    ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
+    if not email:
+        raise ValueError(f"No email found for client_id {client_id}")
     
-    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')    #returning xml message
+    xml = ET.Element("UserMessage")
+    ET.SubElement(xml, "ActionType").text = "DELETE"
+
+    email_elem = ET.SubElement(xml, "Email")
+    email_elem.text = email  # Email of the user to be deleted
+    
+    time_elem = ET.SubElement(xml, "TimeOfAction")
+    time_elem.text = datetime.utcnow().isoformat() + "Z"
+    
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')
 
 # Get email by client ID from database
 def get_email_by_id(client_id):
