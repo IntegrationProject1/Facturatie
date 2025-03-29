@@ -1,167 +1,93 @@
-import pika
-import json
-import logging
-import mysql.connector
-import os
+import pika, os, logging
 import xml.etree.ElementTree as ET
-from datetime import datetime
-from dotenv import load_dotenv
-from pathlib import Path
+import mysql.connector
 
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def get_db_connection():
-    return mysql.connector.connect(
-        host=os.environ["DB_HOST"],
-        user=os.environ["DB_USER"],
-        password=os.environ["DB_PASSWORD"],
-        database=os.environ["DB_NAME"],
+# no need to use load_dotenv() here
+# docker will pass the environment variables directly to the container
+
+def delete_client(email):
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
     )
+    cursor = conn.cursor()
 
 
-def find_user_by_email(email):
-
-    db_connection = get_db_connection()
+    # check to see if client exists
+    # if we do not check if the client exists, we won't get an error on deletion
+    # because technically nothing went wrong, the client just didn't exist
     try:
-        with db_connection.cursor() as cursor: # Tries to find the user using their email
-            sql = "SELECT id FROM client WHERE email = %s"
-            cursor.execute(sql, (email,))
-            result = cursor.fetchone() # ?
-            return result['id'] if result else None
-    except Exception as e:
-        logger.error(f"Error finding user by email {email}: {str(e)}")
-        return None
+        cursor.execute("SELECT id FROM client WHERE email = %s", (email,))
+        user = cursor.fetchone()
     
-def delete_user(email):
-    db_connection = get_db_connection()
-
-    try:
-        with db_connection.cursor() as cursor:
-            # Delete related records first
-            # tables = [
-            #     'client_balance',
-            #     'client_order',
-            #     'invoice',
-            #     'activity',
-            #     # Add other related tables as needed
-            #     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            # ]
-            
-            # for table in tables:
-            #     try:
-            #         cursor.execute(f"DELETE FROM {table} WHERE id = %s", (id,)) # hier moet er weer met de email gewerkt worden
-            #     except Exception as e:
-            #         logger.warning(f"Could not delete from {table}: {str(e)}")
-            
-            # Delete the client
-            cursor.execute("DELETE FROM client WHERE email = %s", (email,)) # hier moet er weer met de email gewerkt worden
-            db_connection.commit()
-            return True
-    except Exception as e:
-        db_connection.rollback() # Rollback the transaction if an error occurs
-        logger.error(f"Error deleting user {email}: {str(e)}")
-        return False
-    
-def process_message(ch, method, properties, body):
-
-    try:
-        message = json.loads(body) 
-        email = message.get('email')
-        
-        if not email:
-            logger.error("Message missing email field")
-            ch.basic_nack(delivery_tag=method.delivery_tag)
-            return
-        
-        logger.info(f"Processing deletion request for email: {email}")
-        
-        client_id = find_user_by_email(email)
-        if not client_id:
-            logger.warning(f"User with email {email} not found")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-            return
-        
-        if delete_user(client_id):
-            logger.info(f"Successfully deleted user {email} (ID: {client_id})")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+    # so now i only delete the client if it exists -> helps with debugging if something goes wrong as well
+        if user:
+            cursor.execute("DELETE FROM client WHERE email = %s", (email,))
+            conn.commit()
+            logger.info(f"Deleted client: {email}")
         else:
-             logger.error(f"Failed to delete user {email}")
-             ch.basic_nack(delivery_tag=method.delivery_tag)
-    
-    except json.JSONDecodeError:
-        logger.error("Invalid JSON message received")
-        ch.basic_nack(delivery_tag=method.delivery_tag)
+            logger.warning(f"Client with email {email} not found - nothing to delete")
     except Exception as e:
-        logger.error(f"Unexpected error processing message: {str(e)}")
-        ch.basic_nack(delivery_tag=method.delivery_tag)
+        logger.error(f"Deletion failed: {e}")
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
 
-def rabbitmq_connection():
 
-    credentials = pika.PlainCredentials(os.environ["RABBITMQ_USER"], os.environ["RABBITMQ_PASSWORD"])
-    parameters = pika.ConnectionParameters(
-        host=os.environ["RABBITMQ_HOST"],
-        port=os.environ["RABBITMQ_PORT"],
-        credentials=credentials,
-    )
-    
-    connection = pika.BlockingConnection(parameters)
+def on_message(channel, method, properties, body):
+    # channel: the channel that received the message
+    # method: information about the message (message metadata)
+    # properties: message properties (headrs, priority, ....)
+    # body: the message itself)
+    try:
+        xml_data = body.decode() # converting message into string
+        email = ET.fromstring(xml_data).find('Email').text
+        delete_client(email)
+        channel.basic_ack(delivery_tag=method.delivery_tag) # 'tells' RabbitMQ that the message was processed successfully
+        # the message is then removed from the queue
+
+    except Exception as e:
+        logger.error(f"Message processing failed: {e}")
+        channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        # 'tells' RabbitMQ that the message processing failed
+        # requeue=False -> the message is not requeued, but discarded or sent to a dead-letter queue
+
+def start_consumer():
+    connection = pika.BlockingConnection(pika.ConnectionParameters(
+        host=os.getenv("RABBITMQ_HOST"),
+        port=int(os.getenv("RABBITMQ_PORT")),
+        credentials=pika.PlainCredentials(
+            os.getenv("RABBITMQ_USER"),
+            os.getenv("RABBITMQ_PASSWORD")
+        )
+    ))
     channel = connection.channel()
     
-    # These queues can also be placed inside the .env file for more security
-    # but that's an improvement up for discussion with the team later when improving the code
-    RABBITMQ_QUEUES = [
-        "crm_user_delete",
-        "frontend_user_delete",
-        "facturatie_user_delete", # to delete later -> just for testing
-        "kassa_user_delete"
-    ]
-    for queue in RABBITMQ_QUEUES:
-        channel.queue_declare(queue=queue, durable=True)
-    
-    return connection, channel
-
-def main():
-    # Debug test
-    print("Testing database connection...")
     try:
-        conn = get_db_connection()
-        conn.close()
-        print("Database connection test successful!")
-    except Exception as e:
-        print(f"Database connection test failed: {e}")
-        return
-
-    try:
-        connection, channel = rabbitmq_connection()
+        for queue in ['kassa_user_delete', 'crm_user_delete', 'frontend_user_delete']:
+            channel.queue_declare(queue=queue, durable=True)
+            # queue=queue -> this is the queue we are listening to
+            # durable=True -> the queue will survive a RabbitMQ server restart
+            # the whole function ensures that the queues exists and are ready to receive messages
+            channel.basic_consume(queue=queue, on_message_callback=on_message)
+            # whenever a new message is received, the on_message_callback function is called
         
-        queues = [
-            "crm_user_delete",
-            "frontend_user_delete", 
-            "facturatie_user_delete",
-            "kassa_user_delete"
-        ]
-        
-        for queue in queues:
-            channel.basic_consume(
-                queue=queue,
-                on_message_callback=process_message,  # Removed the extra parameter
-                auto_ack=False
-            )
-        
-        logger.info("Waiting for messages. To exit press CTRL+C")
+        logger.info("Listening for deletion messages...")
         channel.start_consuming()
-    
-    except KeyboardInterrupt:
-        logger.info("Shutting down gracefully...")
-    except Exception as e:
-        logger.error(f"Fatal error: {str(e)}")
-    finally:
-        if 'channel' in locals():
-            channel.stop_consuming()
-        if 'connection' in locals():
-            connection.close()
 
-if __name__ == '__main__':
-    main()
+        # you can interrupt the consumer with CTRL+C
+        # this just makes sure that the connection is closed properly
+    except KeyboardInterrupt:
+        logger.info("Stopping consumer ...")
+        channel.stop_consuming()
+        connection.close()
+        logger.info("Consumer stopped.")
+
+if __name__ == "__main__":
+    start_consumer()
