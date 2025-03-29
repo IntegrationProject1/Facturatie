@@ -73,10 +73,23 @@ def create_deletion_xml(client_id):
     
     # Action info
     ET.SubElement(xml, "ActionType").text = "DELETE"
-    ET.SubElement(xml, "UserID").text = str(client_id)
+    email = get_email_by_id(client_id)
+    ET.SubElement(xml, "Email").text = email
     ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
     
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')    #returning xml message
+
+# Get email by client ID from database
+def get_email_by_id(client_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT email FROM client WHERE id = %s", (client_id,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    finally:
+        cursor.close()
+        conn.close()
 
 # Send XML message to RabbitMQ exchange for user deletion
 def send_to_rabbitmq(xml):
