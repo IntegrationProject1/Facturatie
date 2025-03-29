@@ -67,46 +67,41 @@ def mark_as_processed(client_id):
 
 # Create XML message for RabbitMQ from user data
 def create_deletion_xml(client_id):
-
-    try:
-        email = get_email_by_id(client_id)
-        if not email:
-            logger.warning(f"Client {client_id} exists but has no email - using fallback")
-            email = f"unknown_{client_id}@placeholder.com"
-
-        xml = ET.Element("UserMessage")
-        ET.SubElement(xml, "ActionType").text = "DELETE"
-        
-        email_elem = ET.SubElement(xml, "Email")
-        email_elem.text = email
-        
-        ET.SubElement(xml, "OriginalClientID").text = str(client_id)
-        ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
-        
-        return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')
-    except Exception as e:
-        logger.error(f"XML generation failed for client {client_id}: {e}")
+    """Generates XML only for valid emails (no client ID in output)"""
+    if not (email := get_valid_email(client_id)):
         return None
 
-def get_email_by_id(client_id):
+    try:
+        xml = ET.Element("UserMessage")
+        ET.SubElement(xml, "ActionType").text = "DELETE"
+        ET.SubElement(xml, "Email").text = email
+        ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
+        return '<?xml version="1.0"?>\n' + ET.tostring(xml, encoding='unicode')
+    except Exception as e:
+        logger.error(f"XML generation failed: {e}")
+        return None
+
+def get_valid_email(client_id):
+    """Returns only properly formatted emails or None"""
     conn = None
     try:
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT email FROM client 
-            WHERE id = %s 
-            AND email IS NOT NULL 
-            AND email != ''
-        """, (client_id,))
-        result = cursor.fetchone()
-        return result[0] if result else None
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT email FROM client 
+                WHERE id = %s 
+                AND email IS NOT NULL 
+                AND email LIKE '_%@_%._%'
+            """, (client_id,))
+            if (result := cursor.fetchone()):
+                return result[0]
+            logger.warning(f"Invalid/missing email for client {client_id}")
+            return None
     except Exception as e:
-        logger.error(f"Email lookup error for client {client_id}: {e}")
+        logger.error(f"Email validation error for client {client_id}: {e}")
         return None
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
 
 # Send XML message to RabbitMQ exchange for user deletion
 def send_to_rabbitmq(xml):
