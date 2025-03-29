@@ -1,0 +1,20 @@
+2025-03-29 09:58:47,479 - WARNING - Database connection failed (attempt 1): 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 09:58:52,166 - WARNING - Database connection failed (attempt 2): 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 09:58:56,880 - ERROR - Final database connection attempt failed
+2025-03-29 09:58:56,880 - ERROR - Fatal error: 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 09:58:56,888 - INFO - Service shutdown complete
+2025-03-29 09:59:41,734 - WARNING - Database connection failed (attempt 1): 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 09:59:46,430 - WARNING - Database connection failed (attempt 2): 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 09:59:51,127 - ERROR - Final database connection attempt failed
+2025-03-29 09:59:51,127 - ERROR - Fatal error: 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 09:59:51,127 - INFO - Service shutdown complete
+2025-03-29 10:00:07,475 - WARNING - Database connection failed (attempt 1): 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 10:00:12,171 - WARNING - Database connection failed (attempt 2): 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 10:00:16,874 - ERROR - Final database connection attempt failed
+2025-03-29 10:00:16,874 - ERROR - Fatal error: 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 10:00:16,874 - INFO - Service shutdown complete
+2025-03-29 11:26:18,266 - WARNING - user_update_consumer - Database connection failed (attempt 1): 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 11:26:22,966 - WARNING - user_update_consumer - Database connection failed (attempt 2): 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 11:26:27,658 - ERROR - user_update_consumer - Final database connection attempt failed
+2025-03-29 11:26:27,658 - ERROR - user_update_consumer - Fatal error: 2003: Can't connect to MySQL server on '%-.100s:%u' (%s) (Warning: %u format: a real number is required, not str)
+2025-03-29 11:26:27,658 - INFO - user_update_consumer - Service shutdown complete
