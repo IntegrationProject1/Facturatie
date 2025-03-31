@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 # Establish a connection to the MySQL database
 def get_db_connection():
+
     try:
         return mysql.connector.connect(
             host=os.getenv("DB_HOST"),
@@ -21,11 +22,59 @@ def get_db_connection():
         logger.error(f"Database connection failed: {e}")
         raise
 
-# Update user details in the database
-def update_user(user_data):
+# Fetch current user data from the database
+def get_current_user_data(email):
+
     conn = None
     cursor = None
     try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT first_name, last_name, phone, company, company_vat, 
+                   address_1, city, postcode 
+            FROM client 
+            WHERE email = %s
+        """, (email,))
+        
+        result = cursor.fetchone()
+        if not result:
+            raise ValueError(f"No user found with email: {email}")
+            
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch current user data: {e}")
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if conn and conn.is_connected():
+            conn.close()
+
+# Update user details in the database
+def update_user(user_data):
+
+    conn = None
+    cursor = None
+    try:
+        # Get current data for fields not being updated
+        current_data = get_current_user_data(user_data['email'])
+        
+        # Prepare update fields - only update what's provided in the XML
+        update_fields = {
+            'first_name': user_data.get('first_name') or current_data['first_name'],
+            'last_name': user_data.get('last_name') or current_data['last_name'],
+            'phone': user_data.get('phone') or current_data['phone'],
+            'company': user_data.get('business_name') or current_data['company'],
+            'company_vat': user_data.get('vat_number') or current_data['company_vat'],
+            'address_1': user_data.get('address') or current_data['address_1'],
+            'city': extract_city(user_data.get('address')) if user_data.get('address') else current_data['city'],
+            'postcode': extract_postcode(user_data.get('address')) if user_data.get('address') else current_data['postcode'],
+            'email': user_data['email']
+        }
+        
         conn = get_db_connection()
         cursor = conn.cursor()
         
@@ -43,17 +92,16 @@ def update_user(user_data):
         WHERE email = %s
         """
         
-        # Execute the update query with user data
         cursor.execute(update_query, (
-            user_data['first_name'],
-            user_data['last_name'],
-            user_data['phone'],
-            user_data['business_name'],
-            user_data['vat_number'],
-            user_data['address'],
-            extract_city(user_data['address']),
-            extract_postcode(user_data['address']),
-            user_data['email']
+            update_fields['first_name'],
+            update_fields['last_name'],
+            update_fields['phone'],
+            update_fields['company'],
+            update_fields['company_vat'],
+            update_fields['address_1'],
+            update_fields['city'],
+            update_fields['postcode'],
+            update_fields['email']
         ))
         
         conn.commit()
@@ -71,15 +119,21 @@ def update_user(user_data):
         if conn and conn.is_connected():
             conn.close()
 
-# Extract city from the address string
+# Extract the city from the address string
 def extract_city(address):
+
+    if not address:
+        return ''
     parts = address.split(',')
     if len(parts) >= 3:
         return parts[-2].strip()
     return ''
 
-# Extract postcode from the address string
+# Extract the postcode from the address string
 def extract_postcode(address):
+
+    if not address:
+        return ''
     parts = address.split(',')
     if len(parts) >= 3:
         return parts[-1].strip().split(' ')[0]
@@ -87,39 +141,51 @@ def extract_postcode(address):
 
 # Parse XML data to extract user information
 def parse_user_xml(xml_data):
+
     try:
         root = ET.fromstring(xml_data)
         business = root.find('Business')
         
-        return {
+        # Only include fields that are present in the XML
+        user_data = {
             'action_type': root.find('ActionType').text,
-            'email': root.find('EmailAddress').text,
-            'first_name': root.find('FirstName').text,
-            'last_name': root.find('LastName').text,
-            'phone': root.find('PhoneNumber').text,
-            'business_name': business.find('BusinessName').text if business is not None else '',
-            'vat_number': business.find('BTWNumber').text if business is not None else '',
-            'address': business.find('RealAddress').text if business is not None else ''
+            'email': root.find('EmailAddress').text
         }
+        
+        # Optional fields
+        if root.find('FirstName') is not None:
+            user_data['first_name'] = root.find('FirstName').text
+        if root.find('LastName') is not None:
+            user_data['last_name'] = root.find('LastName').text
+        if root.find('PhoneNumber') is not None:
+            user_data['phone'] = root.find('PhoneNumber').text
+            
+        if business is not None:
+            if business.find('BusinessName') is not None:
+                user_data['business_name'] = business.find('BusinessName').text
+            if business.find('BTWNumber') is not None:
+                user_data['vat_number'] = business.find('BTWNumber').text
+            if business.find('RealAddress') is not None:
+                user_data['address'] = business.find('RealAddress').text
+        
+        return user_data
     except Exception as e:
         logger.error(f"XML parsing failed: {e}")
         raise
 
 # Handle incoming RabbitMQ messages
 def on_message(channel, method, properties, body):
+
     try:
         logger.info(f"Received update message from {method.routing_key}")
         
-        # Parse the XML message
         user_data = parse_user_xml(body.decode())
         
-        # Ignore non-UPDATE actions
         if user_data['action_type'].upper() != 'UPDATE':
             logger.warning(f"Ignoring non-UPDATE action: {user_data['action_type']}")
             channel.basic_ack(method.delivery_tag)
             return
             
-        # Update the user in the database
         update_user(user_data)
         channel.basic_ack(method.delivery_tag)
         
@@ -129,6 +195,7 @@ def on_message(channel, method, properties, body):
 
 # Start the RabbitMQ consumer to listen for update messages
 def start_consumer():
+
     connection = pika.BlockingConnection(pika.ConnectionParameters(
         host=os.getenv("RABBITMQ_HOST"),
         port=int(os.getenv("RABBITMQ_PORT")),
@@ -140,7 +207,6 @@ def start_consumer():
     channel = connection.channel()
     
     try:
-        # Declare queues to listen for user updates
         queues = ['crm_user_update', 'frontend_user_update', 'kassa_user_update']
         for queue in queues:
             channel.queue_declare(queue=queue, durable=True)
