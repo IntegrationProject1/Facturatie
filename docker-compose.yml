@@ -109,6 +109,17 @@ services:
     networks:
       - facturatie_network
 
+# User Update Consumer Service
+  user-update-consumer:
+    build: ./user_update_consumer
+    container_name: facturatie_update_consumer
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
 networks:
   facturatie_network:
     name: facturatie_network
