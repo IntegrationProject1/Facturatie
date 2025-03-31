@@ -111,7 +111,7 @@ services:
 
 # User Update Consumer Service
   user-update-consumer:
-    build: ./user_update_consumer
+    build: ./user-update-consumer
     container_name: facturatie_update_consumer
     restart: unless-stopped
     env_file: .env
