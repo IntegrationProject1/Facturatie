@@ -103,6 +103,39 @@ services:
     networks:
       - facturatie_network
 
+# User Deletion Consumer Service
+  user-deletion-consumer:
+    build: ./user-deletion-consumer
+    container_name: facturatie_deletion_consumer
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
+# User Creation Consumer Service
+  user-creation-consumer:
+    build: ./user-creation-consumer
+    container_name: facturatie_creation_consumer
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
+# User Update Consumer Service
+  user-update-consumer:
+    build: ./user-update-consumer
+    container_name: facturatie_update_consumer
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
 networks:
   facturatie_network:
     name: facturatie_network
