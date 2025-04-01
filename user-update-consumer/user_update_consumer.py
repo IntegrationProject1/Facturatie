@@ -1,97 +1,201 @@
 import pika
-import xml.etree.ElementTree as ET
-import logging
-import mysql.connector
 import os
-import time
-from dotenv import load_dotenv
+import logging
+import xml.etree.ElementTree as ET
+import mysql.connector
 
-#reads the .env file
-load_dotenv()
-
-# set up logging configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(module)s - %(message)s',
-)
+# Configure logging for the application
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Function to get the text of an XML element. it also prevents the code from crashing if the element is not found
-def get_xml_text(parent, tag):
-    elem = parent.find(tag)
-    return elem.text if elem is not None else None
+# Establish a connection to the MySQL database
+def get_db_connection():
 
-# Function to update the user in the database. It checks if the user exists by email and then updates the fields
-def update_client(email, root):
-    # Connect to the database
-    conn = mysql.connector.connect(
-        host=os.getenv("DB_HOST"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME")
-    )
-    cursor = conn.cursor()
-    # find the user by email
-    cursor.execute("SELECT id FROM client WHERE email = %s", (email,))
-    user = cursor.fetchone()
-    
-    # update the fields gather new information from the xml
     try:
-        update_fields = {}
-
-        if get_xml_text(root, "FirstName"):
-            update_fields['first_name'] = get_xml_text(root, "FirstName")
-        if get_xml_text(root, "LastName"):
-            update_fields['last_name'] = get_xml_text(root, "LastName")
-        if get_xml_text(root, "PhoneNumber"):
-            update_fields['phone'] = get_xml_text(root, "PhoneNumber")
-
-        business = root.find("Business")
-        if business is not None:
-            if get_xml_text(business, "BusinessName"):
-                update_fields['company'] = get_xml_text(business, "BusinessName")
-            if get_xml_text(business, "BTWNumber"):
-                update_fields['company_vat'] = get_xml_text(business, "BTWNumber")
-
-            # build and run the update query. It updates the fields that have been changed
-        if update_fields:
-            set_clause = ", ".join([f"{k} = %s" for k in update_fields])
-            values = list(update_fields.values()) + [email]
-            cursor.execute(
-                f"UPDATE client SET {set_clause} WHERE email = %s",
-                values
-            )
-            conn.commit()
-            logger.info(f"Updated user {email} with fields: {list(update_fields.keys())}")
-
-        cursor.close()
-        conn.close()
-        return True
-
+        return mysql.connector.connect(
+            host=os.getenv("DB_HOST"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            database=os.getenv("DB_NAME")
+        )
     except Exception as e:
-        logger.error(f"Error processing user update: {e}")
-        return False
-# Function to process the message. It reads the xml and gets the email.
-def on_message(channel, method, properties, body):
+        logger.error(f"Database connection failed: {e}")
+        raise
+
+# Fetch current user data from the database
+def get_current_user_data(email):
+
+    conn = None
+    cursor = None
     try:
-        #decode the xml and get the user email
-        xml_data = body.decode()
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT first_name, last_name, phone, company, company_vat, 
+                   address_1, city, postcode 
+            FROM client 
+            WHERE email = %s
+        """, (email,))
+        
+        result = cursor.fetchone()
+        if not result:
+            raise ValueError(f"No user found with email: {email}")
+            
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch current user data: {e}")
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if conn and conn.is_connected():
+            conn.close()
+
+# Update user details in the database
+def update_user(user_data):
+
+    conn = None
+    cursor = None
+    try:
+        # Get current data for fields not being updated
+        current_data = get_current_user_data(user_data['email'])
+        
+        # Prepare update fields - only update what's provided in the XML
+        update_fields = {
+            'first_name': user_data.get('first_name') or current_data['first_name'],
+            'last_name': user_data.get('last_name') or current_data['last_name'],
+            'phone': user_data.get('phone') or current_data['phone'],
+            'company': user_data.get('business_name') or current_data['company'],
+            'company_vat': user_data.get('vat_number') or current_data['company_vat'],
+            'address_1': user_data.get('address') or current_data['address_1'],
+            'city': extract_city(user_data.get('address')) if user_data.get('address') else current_data['city'],
+            'postcode': extract_postcode(user_data.get('address')) if user_data.get('address') else current_data['postcode'],
+            'email': user_data['email']
+        }
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        update_query = """
+        UPDATE client SET
+            first_name = %s,
+            last_name = %s,
+            phone = %s,
+            company = %s,
+            company_vat = %s,
+            address_1 = %s,
+            city = %s,
+            postcode = %s,
+            updated_at = NOW()
+        WHERE email = %s
+        """
+        
+        cursor.execute(update_query, (
+            update_fields['first_name'],
+            update_fields['last_name'],
+            update_fields['phone'],
+            update_fields['company'],
+            update_fields['company_vat'],
+            update_fields['address_1'],
+            update_fields['city'],
+            update_fields['postcode'],
+            update_fields['email']
+        ))
+        
+        conn.commit()
+        logger.info(f"Updated client: {user_data['email']}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Client update failed: {e}")
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if conn and conn.is_connected():
+            conn.close()
+
+# Extract the city from the address string
+def extract_city(address):
+
+    if not address:
+        return ''
+    parts = address.split(',')
+    if len(parts) >= 3:
+        return parts[-2].strip()
+    return ''
+
+# Extract the postcode from the address string
+def extract_postcode(address):
+
+    if not address:
+        return ''
+    parts = address.split(',')
+    if len(parts) >= 3:
+        return parts[-1].strip().split(' ')[0]
+    return ''
+
+# Parse XML data to extract user information
+def parse_user_xml(xml_data):
+
+    try:
         root = ET.fromstring(xml_data)
-        email = get_xml_text(root, 'EmailAddress')
-        # if the email is missing, skip the message
-        if not email:
-            logger.warning("EmailAddress not found in message. Skipping.")
-            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        business = root.find('Business')
+        
+        # Only include fields that are present in the XML
+        user_data = {
+            'action_type': root.find('ActionType').text,
+            'email': root.find('EmailAddress').text
+        }
+        
+        # Optional fields
+        if root.find('FirstName') is not None:
+            user_data['first_name'] = root.find('FirstName').text
+        if root.find('LastName') is not None:
+            user_data['last_name'] = root.find('LastName').text
+        if root.find('PhoneNumber') is not None:
+            user_data['phone'] = root.find('PhoneNumber').text
+            
+        if business is not None:
+            if business.find('BusinessName') is not None:
+                user_data['business_name'] = business.find('BusinessName').text
+            if business.find('BTWNumber') is not None:
+                user_data['vat_number'] = business.find('BTWNumber').text
+            if business.find('RealAddress') is not None:
+                user_data['address'] = business.find('RealAddress').text
+        
+        return user_data
+    except Exception as e:
+        logger.error(f"XML parsing failed: {e}")
+        raise
+
+# Handle incoming RabbitMQ messages
+def on_message(channel, method, properties, body):
+
+    try:
+        logger.info(f"Received update message from {method.routing_key}")
+        
+        user_data = parse_user_xml(body.decode())
+        
+        if user_data['action_type'].upper() != 'UPDATE':
+            logger.warning(f"Ignoring non-UPDATE action: {user_data['action_type']}")
+            channel.basic_ack(method.delivery_tag)
             return
-
-        update_client(email, root)
-        channel.basic_ack(delivery_tag=method.delivery_tag)
-
+            
+        update_user(user_data)
+        channel.basic_ack(method.delivery_tag)
+        
     except Exception as e:
         logger.error(f"Message processing failed: {e}")
-        channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-# Function to start the consumer. It connects to the rabbitmq server and listens for messages
+        channel.basic_nack(method.delivery_tag, requeue=False)
+
+# Start the RabbitMQ consumer to listen for update messages
 def start_consumer():
+
     connection = pika.BlockingConnection(pika.ConnectionParameters(
         host=os.getenv("RABBITMQ_HOST"),
         port=int(os.getenv("RABBITMQ_PORT")),
@@ -101,19 +205,29 @@ def start_consumer():
         )
     ))
     channel = connection.channel()
-# it listens for messages from the following queues and when a message is received it calls the on_message function
-    for queue in ['facturatie_user_update', 'crm_user_update', 'kassa_user_update', 'frontend_user_update']:
-        channel.queue_declare(queue=queue, durable=True)
-        channel.basic_consume(queue=queue, on_message_callback=on_message)
-
-    logger.info("Listening for update messages...")
+    
     try:
+        queues = ['crm_user_update', 'frontend_user_update', 'kassa_user_update']
+        for queue in queues:
+            channel.queue_declare(queue=queue, durable=True)
+            channel.basic_consume(
+                queue=queue,
+                on_message_callback=on_message,
+                auto_ack=False
+            )
+        
+        logger.info("Waiting for user update messages...")
         channel.start_consuming()
+        
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        logger.info("Stopping consumer...")
         channel.stop_consuming()
         connection.close()
-        logger.info("consumer stopped.")
+        logger.info("Consumer stopped.")
+    except Exception as e:
+        logger.error(f"Consumer failed: {e}")
+        raise
 
+# Main entry point to start the consumer
 if __name__ == "__main__":
     start_consumer()

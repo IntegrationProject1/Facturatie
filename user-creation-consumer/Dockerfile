@@ -7,4 +7,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "user_update_consumer.py"]
+CMD ["python", "user_creation_consumer.py"]
