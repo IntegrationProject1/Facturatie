@@ -92,7 +92,6 @@ def create_xml_message(user):
 
 # Send XML message to RabbitMQ for processing
 def send_to_rabbitmq(xml):
-
     try:
         params = pika.ConnectionParameters(
             host=os.environ["RABBITMQ_HOST"],
@@ -109,10 +108,31 @@ def send_to_rabbitmq(xml):
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
         
-        channel.queue_declare(queue="facturatie_user_update", durable=True)  
+        # Declare all three update queues
+        channel.queue_declare(queue="crm_user_update", durable=True)
+        channel.queue_declare(queue="frontend_user_update", durable=True)
+        channel.queue_declare(queue="kassa_user_update", durable=True)
+        
+        # Publish to all three queues with persistent messages
         channel.basic_publish(
             exchange="user",
-            routing_key="facturatie.user.update",  
+            routing_key="crm.user.update",
+            body=xml,
+            properties=pika.BasicProperties(
+                delivery_mode=2  # Make message persistent
+            )
+        )
+        channel.basic_publish(
+            exchange="user",
+            routing_key="frontend.user.update",
+            body=xml,
+            properties=pika.BasicProperties(
+                delivery_mode=2  # Make message persistent
+            )
+        )
+        channel.basic_publish(
+            exchange="user",
+            routing_key="kassa.user.update",
             body=xml,
             properties=pika.BasicProperties(
                 delivery_mode=2  # Make message persistent
@@ -122,7 +142,7 @@ def send_to_rabbitmq(xml):
         connection.close()
         return True
     except Exception as e:
-        logger.error(f"RabbitMQ Error: {e}")     #error handling + logging
+        logger.error(f"RabbitMQ Error: {e}")
         return False
 
 # Mark user update as processed

@@ -76,7 +76,6 @@ def create_deletion_xml(email):
 # Send XML message to RabbitMQ exchange for user deletion
 def send_to_rabbitmq(xml):
 
-    # Establish connection to RabbitMQ
     try:
         params = pika.ConnectionParameters(
             host=os.environ["RABBITMQ_HOST"],
@@ -93,11 +92,35 @@ def send_to_rabbitmq(xml):
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
         
-        channel.queue_declare(queue="facturatie_user_delete", durable=True)
+        # Declare all three deletion queues
+        channel.queue_declare(queue="crm_user_delete", durable=True)
+        channel.queue_declare(queue="frontend_user_delete", durable=True)
+        channel.queue_declare(queue="kassa_user_delete", durable=True)
+        
+        # Publish to all three queues
         channel.basic_publish(
             exchange="user",
-            routing_key="facturatie.user.delete",
-            body=xml    #sending xml message to RabbitMQ
+            routing_key="crm.user.delete",
+            body=xml,
+            properties=pika.BasicProperties(
+                delivery_mode=2  # Make message persistent
+            )
+        )
+        channel.basic_publish(
+            exchange="user",
+            routing_key="frontend.user.delete",
+            body=xml,
+            properties=pika.BasicProperties(
+                delivery_mode=2  # Make message persistent
+            )
+        )
+        channel.basic_publish(
+            exchange="user",
+            routing_key="kassa.user.delete",
+            body=xml,
+            properties=pika.BasicProperties(
+                delivery_mode=2  # Make message persistent
+            )
         )
         
         connection.close()
