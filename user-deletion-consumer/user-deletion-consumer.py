@@ -69,8 +69,10 @@ def start_consumer():
     ))
     channel = connection.channel()
     
+    # voor optimalisatie: geen for loop aangezien er maar 1 queue is
+    # voor optimalisatie: zien of er nog een channel nodig is
     try:
-        for queue in ['kassa_user_delete', 'crm_user_delete', 'frontend_user_delete']:
+        for queue in ['facturatie_user_delete']:
             channel.queue_declare(queue=queue, durable=True)
             # queue=queue -> this is the queue we are listening to
             # durable=True -> the queue will survive a RabbitMQ server restart
