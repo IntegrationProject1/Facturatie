@@ -207,7 +207,7 @@ def start_consumer():
     channel = connection.channel()
     
     try:
-        queues = ['crm_user_update', 'frontend_user_update', 'kassa_user_update']
+        queues = [ 'facturatie_user_update'] # to make it come to us (facturatie) instead of the others
         for queue in queues:
             channel.queue_declare(queue=queue, durable=True)
             channel.basic_consume(
