@@ -1,132 +1,197 @@
 import pika
 import os
-import mysql.connector
+import logging
 import xml.etree.ElementTree as ET
-from dotenv import load_dotenv
+import mysql.connector
 
-# Load environment variables
-load_dotenv()
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# RabbitMQ connection settings from .env file
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST")
-RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT"))
-RABBITMQ_USER = os.getenv("RABBITMQ_USER")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD")
-
-# MySQL connection settings
-DB_HOST = os.getenv("DB_HOST")
-DB_NAME = os.getenv("DB_NAME")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_PORT = os.getenv("DB_PORT")
-
-# Function to insert a new user into the database
-def insert_user(email, first_name):
-    conn = None
-    cursor = None
+# Load environment variables and check if user already exists
+def user_exists(email):
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+    cursor = conn.cursor()
+    
     try:
-        conn = mysql.connector.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME,
-                connection_timeout=600,  
-    read_timeout=600 
-            
-
-        )
-        conn.autocommit = True 
-        cursor = conn.cursor()
-
-        # Debugging output
-        print(f"Attempting to insert user: {email}, {first_name}")
-
-        # Check if the user already exists
         cursor.execute("SELECT id FROM client WHERE email = %s", (email,))
-        if cursor.fetchone():
-            print(f"User {email} already exists in the database.")
-        else:
-            cursor.execute("INSERT INTO client (email, first_name) VALUES (%s, %s)", (email, first_name))
-            conn.commit()
-            print(f"Inserted new user: {email}, {first_name}")
-    except mysql.connector.Error as e:
-        print(f"Database error: {e}")
-        if conn:
-            conn.rollback()
+        return cursor.fetchone() is not None
     except Exception as e:
-        print(f"Unexpected error: {e}")
-        if conn:
-            conn.rollback()
+        logger.error(f"Error checking user existence: {e}")
+        raise
     finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+        cursor.close()
+        conn.close()
 
-# Create a connection to RabbitMQ
-try:
-    connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host=RABBITMQ_HOST,
-        port=RABBITMQ_PORT,
-        credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-    ))
-    channel = connection.channel()
-    print("Connected to RabbitMQ")
-except Exception as e:
-    print(f"Failed to connect to RabbitMQ: {e}")
-    exit(1)
+# Extract city and postcode from address
+def extract_city(address):
 
-# Define the queues to listen to
-queues = ["crm_user_create", "frontend_user_create", "kassa_user_create", "facturatie_user_create"]
+    parts = address.split(',')
+    if len(parts) >= 3:
+        return parts[-2].strip()
+    return ''
 
-# Declare the queues in case they don't exist
-for queue in queues:
-    channel.queue_declare(queue=queue, durable=True)
-    print(f"Listening to queue: {queue}")
+# Extract postcode from address string
+def extract_postcode(address):
 
-# Create a callback function to process messages
-def on_message(channel, method, properties, body):
+    parts = address.split(',')
+    if len(parts) >= 3:
+        return parts[-1].strip().split(' ')[0]
+    return ''
+
+# Create user in FossBilling database
+def create_user(user_data):
+
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+    cursor = conn.cursor()
+    
     try:
-        xml_data = body.decode()
-        print(f"Received message: {xml_data}")  # Debugging output
+        # Check if user already exists
+        if user_exists(user_data['email']):
+            logger.warning(f"User with email {user_data['email']} already exists")
+            return False
         
-        # Parse XML
+        # Prepare data for FossBilling schema
+        from datetime import datetime
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        insert_query = """
+        INSERT INTO client (
+            role, email, status, first_name, last_name, 
+            phone, company, company_vat, address_1, 
+            city, state, postcode, country, currency, 
+            created_at, updated_at, is_processed
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        cursor.execute(insert_query, (
+            'client',                              # role
+            user_data['email'],                    # email
+            'active',                              # status
+            user_data['first_name'],               # first_name
+            user_data['last_name'],               # last_name
+            user_data['phone'],                   # phone
+            user_data['business_name'],           # company
+            user_data['vat_number'],               # company_vat
+            user_data['address'],                  # address_1
+            extract_city(user_data['address']),    # city (extracted from address)
+            '',                                    # state (empty as it's in address)
+            extract_postcode(user_data['address']), # postcode
+            'BE',                                 # country (default to Belgium)
+            'EUR',                                # currency
+            now,                                  # created_at
+            now,                                  # updated_at
+            0                                     # is_processed
+        ))
+        
+        conn.commit()
+        logger.info(f"Created new client: {user_data['email']}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Client creation failed: {e}")
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+# Parse XML message
+def parse_user_xml(xml_data):
+
+    try:
         root = ET.fromstring(xml_data)
         
-        # Extract required fields from XML
-        action_type = root.find('ActionType').text if root.find('ActionType') is not None else None
-        user_id = root.find('UserID').text if root.find('UserID') is not None else None
-        time_of_action = root.find('TimeOfAction').text if root.find('TimeOfAction') is not None else None
-        first_name = root.find('FirstName').text if root.find('FirstName') is not None else None
-        last_name = root.find('LastName').text if root.find('LastName') is not None else None
-        phone_number = root.find('PhoneNumber').text if root.find('PhoneNumber') is not None else None
-        email_address = root.find('EmailAddress').text if root.find('EmailAddress') is not None else None
+        business = root.find('Business')
         
-        # Log the extracted values
-        print(f"ActionType: {action_type}, UserID: {user_id}, FirstName: {first_name}, LastName: {last_name}, EmailAddress: {email_address}")
-        
-        # Now insert the data into the database
-        if email_address and first_name:  # Ensure we have necessary info to insert
-            insert_user(email_address, first_name)
-        else:
-            print("Error: Missing necessary fields (Email or FirstName) in the XML.")
-
-        # Acknowledge the message
-        channel.basic_ack(delivery_tag=method.delivery_tag)
-    
-    except ET.ParseError as e:
-        print(f"XML Parsing error: {e}")
-        # Nack the message and don't requeue it
-        channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        return {
+            'action_type': root.find('ActionType').text,
+            'user_id': root.find('UserID').text,
+            'action_time': root.find('TimeOfAction').text,
+            'first_name': root.find('FirstName').text,
+            'last_name': root.find('LastName').text,
+            'phone': root.find('PhoneNumber').text,
+            'email': root.find('EmailAddress').text,
+            'business_name': business.find('BusinessName').text,
+            'business_email': business.find('BusinessEmail').text,
+            'address': business.find('RealAddress').text,
+            'vat_number': business.find('BTWNumber').text,
+            'billing_address': business.find('FacturationAddress').text
+        }
     except Exception as e:
-        print(f"Failed to process message: {e}")
-        # Nack the message and don't requeue it
-        channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        logger.error(f"XML parsing failed: {e}")
+        raise
 
-# Start consuming messages from each queue
-for queue in queues:
-    channel.basic_consume(queue=queue, on_message_callback=on_message)
+# Callback for when a message is received from RabbitMQ
+def on_message(channel, method, properties, body):
 
-print("Listening for new user creation messages...")
-channel.start_consuming()
+    try:
+        logger.info(f"Received message from {method.routing_key}")
+        
+        # Parse XML
+        user_data = parse_user_xml(body.decode())
+        
+        # Only process CREATE actions
+        if user_data['action_type'].upper() != 'CREATE':
+            logger.warning(f"Ignoring non-CREATE action: {user_data['action_type']}")
+            channel.basic_ack(method.delivery_tag)
+            return
+            
+        # Create user in database
+        create_user(user_data)
+        
+        # Acknowledge message
+        channel.basic_ack(method.delivery_tag)
+        
+    except Exception as e:
+        logger.error(f"Message processing failed: {e}")
+        channel.basic_nack(method.delivery_tag, requeue=False)
+
+# Start the RabbitMQ consumer
+def start_consumer():
+
+    connection = pika.BlockingConnection(pika.ConnectionParameters(
+        host=os.getenv("RABBITMQ_HOST"),
+        port=int(os.getenv("RABBITMQ_PORT")),
+        credentials=pika.PlainCredentials(
+            os.getenv("RABBITMQ_USER"),
+            os.getenv("RABBITMQ_PASSWORD")
+        )
+    ))
+    channel = connection.channel()
+    
+    try:
+        # Declare all queues we want to listen to
+        queues = ['facturatie_user_create']
+        for queue in queues:
+            channel.queue_declare(queue=queue, durable=True)
+            channel.basic_consume(
+                queue=queue,
+                on_message_callback=on_message,
+                auto_ack=False
+            )
+        
+        logger.info("Waiting for user creation messages...")
+        channel.start_consuming()
+        
+    except KeyboardInterrupt:
+        logger.info("Stopping consumer...")
+        channel.stop_consuming()
+        connection.close()
+        logger.info("Consumer stopped.")
+    except Exception as e:
+        logger.error(f"Consumer failed: {e}")
+        raise
+
+if __name__ == "__main__":
+    start_consumer()
