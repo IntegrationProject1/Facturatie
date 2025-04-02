@@ -162,6 +162,7 @@ def on_message(channel, method, properties, body):
         create_user(user_data)
         
         # Acknowledge message
+        logger.info(f"Acknowledging message: {method.delivery_tag}")  # Add this log
         channel.basic_ack(method.delivery_tag)
         
     except Exception as e:
@@ -180,6 +181,7 @@ def start_consumer():
         )
     ))
     channel = connection.channel()
+    channel.basic_qos(prefetch_count=1)  # Prevents RabbitMQ from sending multiple messages before acknowledging
     
     try:
         # Declare all queues we want to listen to
