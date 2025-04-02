@@ -233,7 +233,7 @@ def start_consumer():
             auto_ack=False
         )
 
-        logger.info("Waiting for user creation messages...")
+        logger.info("Waiting for user update messages...")
         channel.start_consuming()
         
     except KeyboardInterrupt:

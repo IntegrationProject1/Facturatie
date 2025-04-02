@@ -97,7 +97,7 @@ def start_consumer():
             auto_ack=False
         )
 
-        logger.info("Waiting for user creation messages...")
+        logger.info("Waiting for user deletion messages...")
         channel.start_consuming()
 
         # you can interrupt the consumer with CTRL+C
