@@ -144,27 +144,9 @@ def send_to_rabbitmq(xml):
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
         
-        # Declare all three queues
-        channel.queue_declare(queue="crm_user_create", durable=True)
-        channel.queue_declare(queue="frontend_user_create", durable=True)
-        channel.queue_declare(queue="kassa_user_create", durable=True)
-        
-        # Publish to all three queues
-        channel.basic_publish(
-            exchange="user",
-            routing_key="crm.user.create",
-            body=xml
-        )
-        channel.basic_publish(
-            exchange="user",
-            routing_key="frontend.user.create",
-            body=xml
-        )
-        channel.basic_publish(
-            exchange="user",
-            routing_key="kassa.user.create",
-            body=xml
-        )
+        # Declare the queue
+        channel.queue_declare(queue="facturatie_user_create", durable=True)
+        channel.basic_publish(exchange="user", routing_key="facturatie.user.create", body=xml)
         
         connection.close()
         return True
