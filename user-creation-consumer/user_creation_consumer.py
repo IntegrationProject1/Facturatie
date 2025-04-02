@@ -121,7 +121,6 @@ def create_user(user_data):
 # Parse XML message
 def parse_user_xml(xml_data):
     try:
-        logger.info(f"Parsing XML: {xml_data}")  # Log the XML before parsing
         root = ET.fromstring(xml_data)
 
         # Utility function to safely get text from XML elements
