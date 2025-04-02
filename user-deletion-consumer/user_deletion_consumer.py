@@ -2,8 +2,20 @@ import pika, os, logging
 import xml.etree.ElementTree as ET
 import mysql.connector
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# For logging and debugging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Disable pika logging
+pika_logger = logging.getLogger("pika")
+pika_logger.handlers.clear()  # Removes any existing handlers
+pika_logger.propagate = False
+pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
+
+open('logfile.log', 'w').close()  # Clear previous log file
 
 # no need to use load_dotenv() here
 # docker will pass the environment variables directly to the container

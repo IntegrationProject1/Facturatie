@@ -4,9 +4,20 @@ import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
 
-# Configure logging for the application
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# For logging and debugging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Disable pika logging
+pika_logger = logging.getLogger("pika")
+pika_logger.handlers.clear()  # Removes any existing handlers
+pika_logger.propagate = False
+pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
+
+open('logfile.log', 'w').close()  # Clear previous log file
 
 # Establish a connection to the MySQL database
 def get_db_connection():
