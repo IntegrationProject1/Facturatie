@@ -3,6 +3,7 @@ import os
 import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
+import time
 
 # For logging and debugging
 logging.basicConfig(
@@ -184,16 +185,21 @@ def start_consumer():
     channel.basic_qos(prefetch_count=1)  # Prevents RabbitMQ from sending multiple messages before acknowledging
     
     try:
-        # Declare all queues we want to listen to
-        queues = ['facturatie_user_create']
-        for queue in queues:
-            channel.queue_declare(queue=queue, durable=True)
-            channel.basic_consume(
-                queue=queue,
-                on_message_callback=on_message,
-                auto_ack=False
-            )
-        
+        # Explicitly declare queue before consuming
+        queue_name = 'facturatie_user_create'
+        channel.queue_declare(queue=queue_name, durable=True)
+
+        # Add a short delay before consuming
+        import time
+        logger.info("Waiting 2 seconds before consuming to ensure queue is ready...")
+        time.sleep(2)
+
+        channel.basic_consume(
+            queue=queue_name,
+            on_message_callback=on_message,
+            auto_ack=False
+        )
+
         logger.info("Waiting for user creation messages...")
         channel.start_consuming()
         
