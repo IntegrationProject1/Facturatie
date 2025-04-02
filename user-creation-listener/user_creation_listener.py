@@ -1,8 +1,10 @@
 import pika
 import os
-import logging
 import xml.etree.ElementTree as ET
+from datetime import datetime
 import mysql.connector
+import time
+import logging
 
 # For logging and debugging
 logging.basicConfig(
@@ -19,190 +21,185 @@ pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
 
 open('logfile.log', 'w').close()  # Clear previous log file
 
-# Load environment variables and check if user already exists
-def user_exists(email):
-    conn = mysql.connector.connect(
-        host=os.getenv("DB_HOST"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME")
+# Database connection
+def get_db_connection():
+    return mysql.connector.connect(
+        host=os.environ["DB_HOST"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASSWORD"],
+        database=os.environ["DB_NAME"]
     )
-    cursor = conn.cursor()
+
+# Get new users from database that have not been processed yet
+def get_new_users():
+
+    # Establish connection
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
     
+    # Get users that have not been processed yet and order by creation date (oldest first)
     try:
-        cursor.execute("SELECT id FROM client WHERE email = %s", (email,))
-        return cursor.fetchone() is not None
-    except Exception as e:
-        logger.error(f"Error checking user existence: {e}")
-        raise
-    finally:
+        cursor.execute("""
+            SELECT 
+                c.id, c.first_name, c.last_name, c.email, c.pass, c.phone, c.created_at,
+                c.company AS business_name,
+                c.company_vat AS btw_number,
+                CONCAT_WS(', ', c.address_1, c.city, c.country) AS real_address
+            FROM client c
+            LEFT JOIN processed_users p ON c.id = p.client_id
+            WHERE p.client_id IS NULL
+            ORDER BY c.created_at ASC
+        """)
+        return cursor.fetchall()
+    except mysql.connector.Error as err:        #error handling + logging
+        logger.error(f"Database error: {err}")
+        return []
+    finally:               #closing cursor and connection
         cursor.close()
         conn.close()
 
-# Extract city and postcode from address
-def extract_city(address):
+# Mark user as processed so it won't be processed again
+def mark_as_processed(client_id):
 
-    parts = address.split(',')
-    if len(parts) >= 3:
-        return parts[-2].strip()
-    return ''
-
-# Extract postcode from address string
-def extract_postcode(address):
-
-    parts = address.split(',')
-    if len(parts) >= 3:
-        return parts[-1].strip().split(' ')[0]
-    return ''
-
-# Create user in FossBilling database
-def create_user(user_data):
-
-    conn = mysql.connector.connect(
-        host=os.getenv("DB_HOST"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME")
-    )
+    # Establish connection
+    conn = get_db_connection()
     cursor = conn.cursor()
     
+    # Insert user into processed_users table
     try:
-        # Check if user already exists
-        if user_exists(user_data['email']):
-            logger.warning(f"User with email {user_data['email']} already exists")
-            return False
-        
-        # Prepare data for FossBilling schema
-        from datetime import datetime
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        insert_query = """
-        INSERT INTO client (
-            role, email, status, first_name, last_name, 
-            phone, company, company_vat, address_1, 
-            city, state, postcode, country, currency, 
-            created_at, updated_at, is_processed
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        
-        cursor.execute(insert_query, (
-            'client',                              # role
-            user_data['email'],                    # email
-            'active',                              # status
-            user_data['first_name'],               # first_name
-            user_data['last_name'],               # last_name
-            user_data['phone'],                   # phone
-            user_data['business_name'],           # company
-            user_data['vat_number'],               # company_vat
-            user_data['address'],                  # address_1
-            extract_city(user_data['address']),    # city (extracted from address)
-            '',                                    # state (empty as it's in address)
-            extract_postcode(user_data['address']), # postcode
-            'BE',                                 # country (default to Belgium)
-            'EUR',                                # currency
-            now,                                  # created_at
-            now,                                  # updated_at
-            0                                     # is_processed
-        ))
-        
+        cursor.execute("""
+            INSERT INTO processed_users (client_id, processed_at)
+            VALUES (%s, NOW())
+        """, (client_id,))
         conn.commit()
-        logger.info(f"Created new client: {user_data['email']}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Client creation failed: {e}")
-        conn.rollback()
-        raise
-    finally:
+    except mysql.connector.Error as err:    #error handling + logging
+        logger.error(f"Failed to mark user {client_id} as processed: {err}")
+    finally:           #closing cursor and connection
         cursor.close()
         conn.close()
 
-# Parse XML message
-def parse_user_xml(xml_data):
+# Create XML message for RabbitMQ
+def create_xml_message(user):
 
+    # Create XML structure with root element UserMessage
+    xml = ET.Element("UserMessage")
+    
+    # Action info
+    ET.SubElement(xml, "ActionType").text = "CREATE"
+    ET.SubElement(xml, "UserID").text = str(user['id'])
+    ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
+    ET.SubElement(xml, "Password").text = user.get('pass', '')
+    
+    # Personal info
+    if user.get('first_name'):
+        ET.SubElement(xml, "FirstName").text = user['first_name']
+    if user.get('last_name'):
+        ET.SubElement(xml, "LastName").text = user['last_name']
+    if user.get('phone'):
+        ET.SubElement(xml, "PhoneNumber").text = user['phone']
+    if user.get('email'):
+        ET.SubElement(xml, "EmailAddress").text = user['email']
+    
+    # Business info (only if VAT or business name exists)
+    if any(user.get(field) for field in ['business_name', 'btw_number', 'real_address']):
+        business = ET.SubElement(xml, "Business")
+        
+        if user.get('business_name'):
+            ET.SubElement(business, "BusinessName").text = user['business_name']
+        
+        # Business email (fallback to personal email)
+        business_email = user.get('email', '')  # Using personal email as fallback
+        if business_email:
+            ET.SubElement(business, "BusinessEmail").text = business_email
+        
+        # Only include fields that exist
+        if user.get('real_address'):
+            ET.SubElement(business, "RealAddress").text = user['real_address']
+        if user.get('btw_number'):
+            ET.SubElement(business, "BTWNumber").text = user['btw_number']
+        
+        # Facturation address (fallback to real address)
+        facturation_address = user.get('real_address', '')
+        if facturation_address:
+            ET.SubElement(business, "FacturationAddress").text = facturation_address
+    
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')    #returning the xml message
+
+# Send XML message to RabbitMQ
+def send_to_rabbitmq(xml):
+
+    # Establish connection to RabbitMQ
     try:
-        root = ET.fromstring(xml_data)
-        
-        business = root.find('Business')
-        
-        return {
-            'action_type': root.find('ActionType').text,
-            'user_id': root.find('UserID').text,
-            'action_time': root.find('TimeOfAction').text,
-            'first_name': root.find('FirstName').text,
-            'last_name': root.find('LastName').text,
-            'phone': root.find('PhoneNumber').text,
-            'email': root.find('EmailAddress').text,
-            'business_name': business.find('BusinessName').text,
-            'business_email': business.find('BusinessEmail').text,
-            'address': business.find('RealAddress').text,
-            'vat_number': business.find('BTWNumber').text,
-            'billing_address': business.find('FacturationAddress').text
-        }
-    except Exception as e:
-        logger.error(f"XML parsing failed: {e}")
-        raise
-
-# Callback for when a message is received from RabbitMQ
-def on_message(channel, method, properties, body):
-
-    try:
-        logger.info(f"Received message from {method.routing_key}")
-        
-        # Parse XML
-        user_data = parse_user_xml(body.decode())
-        
-        # Only process CREATE actions
-        if user_data['action_type'].upper() != 'CREATE':
-            logger.warning(f"Ignoring non-CREATE action: {user_data['action_type']}")
-            channel.basic_ack(method.delivery_tag)
-            return
-            
-        # Create user in database
-        create_user(user_data)
-        
-        # Acknowledge message
-        channel.basic_ack(method.delivery_tag)
-        
-    except Exception as e:
-        logger.error(f"Message processing failed: {e}")
-        channel.basic_nack(method.delivery_tag, requeue=False)
-
-# Start the RabbitMQ consumer
-def start_consumer():
-
-    connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host=os.getenv("RABBITMQ_HOST"),
-        port=int(os.getenv("RABBITMQ_PORT")),
-        credentials=pika.PlainCredentials(
-            os.getenv("RABBITMQ_USER"),
-            os.getenv("RABBITMQ_PASSWORD")
+        params = pika.ConnectionParameters(
+            host=os.environ["RABBITMQ_HOST"],
+            port=int(os.environ["RABBITMQ_PORT"]),
+            virtual_host="/",
+            credentials=pika.PlainCredentials(
+                os.environ["RABBITMQ_USER"],
+                os.environ["RABBITMQ_PASSWORD"]
+            ),
+            heartbeat=600,
+            blocked_connection_timeout=300
         )
-    ))
-    channel = connection.channel()
+        
+        connection = pika.BlockingConnection(params)
+        channel = connection.channel()
+        
+        channel.queue_declare(queue="facturatie_user_create", durable=True)
+        channel.basic_publish(
+            exchange="user",
+            routing_key="facturatie.user.create",
+            body=xml    #sending the xml message mentioned above in create_xml_message
+        )
+        
+        connection.close()
+        return True
+    except Exception as e:  #error handling + logging
+        logger.error(f"RabbitMQ Error: {e}")
+        return False
+
+# Initialize database for safety and to avoid errors
+# Create table processed_users if it does not exist
+def initialize_database():
+
+    # Establish connection
+    conn = get_db_connection()
+    cursor = conn.cursor()
     
     try:
-        # Declare all queues we want to listen to
-        queues = ['crm_user_create', 'frontend_user_create', 'kassa_user_create']
-        for queue in queues:
-            channel.queue_declare(queue=queue, durable=True)
-            channel.basic_consume(
-                queue=queue,
-                on_message_callback=on_message,
-                auto_ack=False
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS processed_users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                client_id INT NOT NULL UNIQUE,
+                processed_at DATETIME NOT NULL
             )
-        
-        logger.info("Waiting for user creation messages...")
-        channel.start_consuming()
-        
-    except KeyboardInterrupt:
-        logger.info("Stopping consumer...")
-        channel.stop_consuming()
-        connection.close()
-        logger.info("Consumer stopped.")
-    except Exception as e:
-        logger.error(f"Consumer failed: {e}")
-        raise
+        """)
+        conn.commit()
+    except Exception as e:  #error handling + logging
+        logger.error(f"Database initialization failed: {e}")
+    finally:       #closing cursor and connection
+        cursor.close()
+        conn.close()
 
+# Main loop
+# Get new users every 5 seconds, create XML message and send to RabbitMQ
 if __name__ == "__main__":
-    start_consumer()
+    initialize_database()
+    logger.info("Starting user creation listener")  #logging
+    
+    while True:
+        try:
+            new_users = get_new_users()
+            
+            for user in new_users:
+                xml = create_xml_message(user)
+                if send_to_rabbitmq(xml):
+                    mark_as_processed(user['id'])
+                    logger.info(f"Processed user {user['id']}")
+                else:
+                    logger.error(f"Failed to process user {user['id']}")
+            
+            time.sleep(5)   # every 5 seconds the loop will run again to check for new users and process them
+        except Exception as e: #error handling + logging
+            logger.error(f"Processing error: {e}")
+            time.sleep(60)  # if there is an error, the loop will wait for 60 seconds before running again
