@@ -4,9 +4,20 @@ import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# For logging and debugging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Disable pika logging
+pika_logger = logging.getLogger("pika")
+pika_logger.handlers.clear()  # Removes any existing handlers
+pika_logger.propagate = False
+pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
+
+open('logfile.log', 'w').close()  # Clear previous log file
 
 # Load environment variables and check if user already exists
 def user_exists(email):
