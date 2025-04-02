@@ -57,7 +57,6 @@ def extract_postcode(address):
 
 # Create user in FossBilling database
 def create_user(user_data):
-
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
         user=os.getenv("DB_USER"),
@@ -85,24 +84,25 @@ def create_user(user_data):
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         
+        # Use None for optional fields if they are not provided
         cursor.execute(insert_query, (
             'client',                              # role
-            user_data['email'],                    # email
+            user_data['email'],                    # email (required)
             'active',                              # status
-            user_data['first_name'],               # first_name
-            user_data['last_name'],               # last_name
-            user_data['phone'],                   # phone
-            user_data['business_name'],           # company
-            user_data['vat_number'],               # company_vat
-            user_data['address'],                  # address_1
-            extract_city(user_data['address']),    # city (extracted from address)
-            '',                                    # state (empty as it's in address)
-            extract_postcode(user_data['address']), # postcode
-            'BE',                                 # country (default to Belgium)
-            'EUR',                                # currency
-            now,                                  # created_at
-            now,                                  # updated_at
-            0                                     # is_processed
+            user_data['first_name'],               # first_name (required)
+            user_data['last_name'],                # last_name (required)
+            user_data.get('phone'),                # phone (optional)
+            user_data.get('business_name'),        # company (optional)
+            user_data.get('vat_number'),           # company_vat (optional)
+            user_data.get('address'),              # address_1 (optional)
+            extract_city(user_data.get('address')) if user_data.get('address') else None,  # city (optional)
+            '',                                    # state (optional, empty string)
+            extract_postcode(user_data.get('address')) if user_data.get('address') else None,  # postcode (optional)
+            'BE',                                  # country (default to Belgium)
+            'EUR',                                 # currency (default to EUR)
+            now,                                   # created_at
+            now,                                   # updated_at
+            0                                      # is_processed
         ))
         
         conn.commit()
