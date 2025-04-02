@@ -3,6 +3,7 @@ import os
 import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
+import time
 
 # For logging and debugging
 logging.basicConfig(
@@ -218,15 +219,20 @@ def start_consumer():
     channel = connection.channel()
     
     try:
-        queues = ['crm_user_update', 'frontend_user_update', 'kassa_user_update']
-        for queue in queues:
-            channel.queue_declare(queue=queue, durable=True)
-            channel.basic_consume(
-                queue=queue,
-                on_message_callback=on_message,
-                auto_ack=False
-            )
-        
+        # Explicitly declare queue before consuming
+        queue_name = 'facturatie_user_update'
+        channel.queue_declare(queue=queue_name, durable=True)
+
+        # Add a short delay before consuming
+        logger.info("Waiting 2 seconds before consuming to ensure queue is ready...")
+        time.sleep(2)
+
+        channel.basic_consume(
+            queue=queue_name,
+            on_message_callback=on_message,
+            auto_ack=False
+        )
+
         logger.info("Waiting for user update messages...")
         channel.start_consuming()
         

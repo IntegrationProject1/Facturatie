@@ -128,6 +128,7 @@ def create_xml_message(user):
 # Send XML message to RabbitMQ
 def send_to_rabbitmq(xml):
 
+    # Establish connection to RabbitMQ
     try:
         params = pika.ConnectionParameters(
             host=os.environ["RABBITMQ_HOST"],
@@ -144,26 +145,11 @@ def send_to_rabbitmq(xml):
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
         
-        # Declare all three queues
-        channel.queue_declare(queue="crm_user_create", durable=True)
-        channel.queue_declare(queue="frontend_user_create", durable=True)
-        channel.queue_declare(queue="kassa_user_create", durable=True)
-        
-        # Publish to all three queues
+        channel.queue_declare(queue="facturatie_user_create", durable=True)
         channel.basic_publish(
             exchange="user",
-            routing_key="crm.user.create",
-            body=xml
-        )
-        channel.basic_publish(
-            exchange="user",
-            routing_key="frontend.user.create",
-            body=xml
-        )
-        channel.basic_publish(
-            exchange="user",
-            routing_key="kassa.user.create",
-            body=xml
+            routing_key="facturatie.user.create",
+            body=xml    #sending the xml message mentioned above in create_xml_message
         )
         
         connection.close()
