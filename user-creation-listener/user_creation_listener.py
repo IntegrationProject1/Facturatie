@@ -12,6 +12,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+open('logfile.log', 'w').close()
 
 # Database connection
 def get_db_connection():
