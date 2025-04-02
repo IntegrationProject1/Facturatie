@@ -1,15 +1,13 @@
-version: '3.8'
-
 services:
-  # MariaDB Database Service
+  # MySQL Database Service
   db:
     image: mysql:8.0
     container_name: facturatie_db
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: facturatie
-      MYSQL_USER: admin
-      MYSQL_PASSWORD: Admin123!
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - db_data:/var/lib/mysql
     networks:
@@ -25,31 +23,106 @@ services:
       - "30081:80"
     environment:
       DB_HOST: db
-      DB_NAME: facturatie
-      DB_USER: admin
-      DB_PASSWORD: Admin123!
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
     volumes:
       - app_data:/var/www/html
     networks:
       - facturatie_network
 
-  # phpMyAdmin Service (for database management)
+  # phpMyAdmin Service 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
     container_name: facturatie_phpmyadmin
     depends_on:
       - db
     ports:
-      - "30082:80"  # Access phpMyAdmin at http://localhost:8082
+      - "30082:80"
     environment:
       PMA_HOST: db
-      PMA_USER: admin
-      PMA_PASSWORD: Admin123!
+      PMA_USER: ${DB_USER}
+      PMA_PASSWORD: ${DB_PASSWORD}
+    networks:
+      - facturatie_network
+
+  #User Creation Listener Service
+  user-listener:
+    build: ./user-creation-listener
+    container_name: facturatie_user_listener
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      RABBITMQ_HOST: ${RABBITMQ_HOST}
+      RABBITMQ_PORT: ${RABBITMQ_PORT}
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+    networks:
+      - facturatie_network
+
+#User Update Listener Service
+  user-update-listener:
+    build: ./user-update-listener
+    container_name: facturatie_update_listener
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
+#User Deletion Listener Service
+  user-deletion-listener:
+    build: ./user-deletion-listener
+    container_name: facturatie_deletion_listener
+    restart: unless-stopped  # Critical for auto-recovery
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
+# User Deletion Consumer Service
+  user-deletion-consumer:
+    build: ./user-deletion-consumer
+    container_name: facturatie_deletion_consumer
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
+# User Creation Consumer Service
+  user-creation-consumer:
+    build: ./user-creation-consumer
+    container_name: facturatie_creation_consumer
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
+# User Update Consumer Service
+  user-update-consumer:
+    build: ./user-update-consumer
+    container_name: facturatie_update_consumer
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
     networks:
       - facturatie_network
 
 networks:
   facturatie_network:
+    name: facturatie_network
     driver: bridge
 
 volumes:
