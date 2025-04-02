@@ -183,7 +183,7 @@ def start_consumer():
     
     try:
         # Declare all queues we want to listen to
-        queues = ['crm_user_create', 'frontend_user_create', 'kassa_user_create']
+        queues = ['facturatie_user_create']
         for queue in queues:
             channel.queue_declare(queue=queue, durable=True)
             channel.basic_consume(
