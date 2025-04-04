@@ -165,6 +165,7 @@ def initialize_database():
                 processed BOOLEAN DEFAULT FALSE,
                 INDEX (client_id),
                 INDEX (processed)
+            )
         """)
         conn.commit()
     except Exception as e:
