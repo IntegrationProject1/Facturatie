@@ -177,7 +177,7 @@ def initialize_database():
 # Main loop
 if __name__ == "__main__":
     initialize_database()
-    logger.info("Starting user update listener")
+    logger.info("Starting user update providor")
     
     while True:
         try:

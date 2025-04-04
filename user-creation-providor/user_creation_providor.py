@@ -187,7 +187,7 @@ def initialize_database():
 # Get new users every 5 seconds, create XML message and send to RabbitMQ
 if __name__ == "__main__":
     initialize_database()
-    logger.info("Starting user creation listener")  #logging
+    logger.info("Starting user creation proviodor")  #logging
     
     while True:
         try:

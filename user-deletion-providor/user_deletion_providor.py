@@ -143,7 +143,7 @@ def initialize_database():
 # Get pending deletions every 5 seconds, create XML message and send to RabbitMQ
 if __name__ == "__main__":
     initialize_database()
-    logger.info("Starting user deletion listener")  #logging
+    logger.info("Starting user deletion providor")  #logging
     
     while True:
         try:
