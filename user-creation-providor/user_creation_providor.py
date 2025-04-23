@@ -52,7 +52,7 @@ def get_new_users():
         for user in users:
             created_at = user['created_at']
             if isinstance(created_at, str):
-                created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                created_at = datetime.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
             user['timestamp'] = created_at  # Keep full datetime with microseconds
         
         return users
