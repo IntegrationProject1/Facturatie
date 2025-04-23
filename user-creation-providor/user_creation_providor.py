@@ -32,7 +32,6 @@ def get_db_connection():
 
 # Get new users from database that have not been processed yet
 def get_new_users():
-
     # Establish connection
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -50,17 +49,32 @@ def get_new_users():
             WHERE p.client_id IS NULL
             ORDER BY c.created_at ASC
         """)
-        return cursor.fetchall()
-    except mysql.connector.Error as err:        #error handling + logging
+        users = cursor.fetchall()
+        
+        # Process each user to add the formatted timestamp
+        for user in users:
+            created_at = user['created_at']
+            if isinstance(created_at, str):
+                created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+            # Format as hhmmssms (e.g., 142536789 for 14:25:36.78)
+            timestamp = (
+                f"{created_at.hour:02d}"
+                f"{created_at.minute:02d}"
+                f"{created_at.second:02d}"
+                f"{created_at.microsecond // 1000:02d}"
+            )
+            user['timestamp'] = int(timestamp)
+            
+        return users
+    except mysql.connector.Error as err:
         logger.error(f"Database error: {err}")
         return []
-    finally:               #closing cursor and connection
+    finally:
         cursor.close()
         conn.close()
 
 # Mark user as processed so it won't be processed again
 def mark_as_processed(client_id):
-
     # Establish connection
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -72,23 +86,22 @@ def mark_as_processed(client_id):
             VALUES (%s, NOW())
         """, (client_id,))
         conn.commit()
-    except mysql.connector.Error as err:    #error handling + logging
+    except mysql.connector.Error as err:
         logger.error(f"Failed to mark user {client_id} as processed: {err}")
-    finally:           #closing cursor and connection
+    finally:
         cursor.close()
         conn.close()
 
 # Create XML message for RabbitMQ
 def create_xml_message(user):
-
     # Create XML structure with root element UserMessage
     xml = ET.Element("UserMessage")
     
     # Action info
     ET.SubElement(xml, "ActionType").text = "CREATE"
-    ET.SubElement(xml, "UserID").text = str(user['id'])
+    ET.SubElement(xml, "UUID").text = str(user['timestamp'])  # Using hhmmssms format as ID
     ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
-    ET.SubElement(xml, "Password").text = user.get('pass', '')
+    ET.SubElement(xml, "EncryptedPassword").text = user.get('pass', '')
     
     # Personal info
     if user.get('first_name'):
@@ -108,7 +121,7 @@ def create_xml_message(user):
             ET.SubElement(business, "BusinessName").text = user['business_name']
         
         # Business email (fallback to personal email)
-        business_email = user.get('email', '')  # Using personal email as fallback
+        business_email = user.get('email', '')
         if business_email:
             ET.SubElement(business, "BusinessEmail").text = business_email
         
@@ -123,7 +136,7 @@ def create_xml_message(user):
         if facturation_address:
             ET.SubElement(business, "FacturationAddress").text = facturation_address
     
-    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')    #returning the xml message
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')
 
 # Send XML message to multiple RabbitMQ queues
 def send_to_rabbitmq(xml):
@@ -161,9 +174,7 @@ def send_to_rabbitmq(xml):
         return False
 
 # Initialize database for safety and to avoid errors
-# Create table processed_users if it does not exist
 def initialize_database():
-
     # Establish connection
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -177,17 +188,16 @@ def initialize_database():
             )
         """)
         conn.commit()
-    except Exception as e:  #error handling + logging
+    except Exception as e:
         logger.error(f"Database initialization failed: {e}")
-    finally:       #closing cursor and connection
+    finally:
         cursor.close()
         conn.close()
 
 # Main loop
-# Get new users every 5 seconds, create XML message and send to RabbitMQ
 if __name__ == "__main__":
     initialize_database()
-    logger.info("Starting user creation proviodor")  #logging
+    logger.info("Starting user creation provider")
     
     while True:
         try:
@@ -197,11 +207,11 @@ if __name__ == "__main__":
                 xml = create_xml_message(user)
                 if send_to_rabbitmq(xml):
                     mark_as_processed(user['id'])
-                    logger.info(f"Processed user {user['id']}")
+                    logger.info(f"Processed user {user['id']} with timestamp ID {user['timestamp']}")
                 else:
                     logger.error(f"Failed to process user {user['id']}")
             
-            time.sleep(5)   # every 5 seconds the loop will run again to check for new users and process them
-        except Exception as e: #error handling + logging
+            time.sleep(5)
+        except Exception as e:
             logger.error(f"Processing error: {e}")
-            time.sleep(60)  # if there is an error, the loop will wait for 60 seconds before running again
+            time.sleep(60)
