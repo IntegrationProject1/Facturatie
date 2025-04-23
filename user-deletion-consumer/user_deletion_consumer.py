@@ -1,6 +1,7 @@
 import pika, os, logging
 import xml.etree.ElementTree as ET
 import mysql.connector
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -8,7 +9,7 @@ logger = logging.getLogger(__name__)
 # no need to use load_dotenv() here
 # docker will pass the environment variables directly to the container
 
-def delete_client(email):
+def delete_client(timestamp):
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
         user=os.getenv("DB_USER"),
@@ -22,16 +23,16 @@ def delete_client(email):
     # if we do not check if the client exists, we won't get an error on deletion
     # because technically nothing went wrong, the client just didn't exist
     try:
-        cursor.execute("SELECT id FROM client WHERE email = %s", (email,))
+        cursor.execute("SELECT id FROM client WHERE timestamp = %s", (timestamp,))
         user = cursor.fetchone()
     
     # so now i only delete the client if it exists -> helps with debugging if something goes wrong as well
         if user:
-            cursor.execute("DELETE FROM client WHERE email = %s", (email,))
+            cursor.execute("DELETE FROM client WHERE timestamp = %s", (timestamp,))
             conn.commit()
-            logger.info(f"Deleted client: {email}")
+            logger.info(f"Deleted client: {timestamp}")
         else:
-            logger.warning(f"Client with email {email} not found - nothing to delete")
+            logger.warning(f"Client with timestamp {timestamp} not found - nothing to delete")
     except Exception as e:
         logger.error(f"Deletion failed: {e}")
         conn.rollback()
@@ -47,8 +48,14 @@ def on_message(channel, method, properties, body):
     # body: the message itself)
     try:
         xml_data = body.decode() # converting message into string
-        email = ET.fromstring(xml_data).find('Email').text
-        delete_client(email)
+        timestamp_str = ET.fromstring(xml_data).find('Timestamp').text
+
+        # first we need to parse the timestamp string into a datetime object
+        # then we can format it into the right format (so that it's the same everywhere)
+        parsed_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+        formatted_timestamp = parsed_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        
+        delete_client(formatted_timestamp)
         channel.basic_ack(delivery_tag=method.delivery_tag) # 'tells' RabbitMQ that the message was processed successfully
         # the message is then removed from the queue
 

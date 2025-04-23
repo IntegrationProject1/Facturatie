@@ -79,6 +79,8 @@ def mark_as_processed(client_id):
         conn.close()
 
 # Create XML message for RabbitMQ
+# Change what is necessary according to what the other teams' input fields are
+
 def create_xml_message(user):
 
     # Create XML structure with root element UserMessage
