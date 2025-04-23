@@ -4,6 +4,7 @@ import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
 import time
+from datetime import datetime
 
 # For logging and debugging
 logging.basicConfig(
@@ -35,7 +36,7 @@ def get_db_connection():
         raise
 
 # Fetch current user data from the database
-def get_current_user_data(email):
+def get_current_user_data(timestamp):
 
     conn = None
     cursor = None
@@ -47,12 +48,12 @@ def get_current_user_data(email):
             SELECT first_name, last_name, phone, company, company_vat, 
                    address_1, city, postcode 
             FROM client 
-            WHERE email = %s
-        """, (email,))
+            WHERE timestamp = %s
+        """, (timestamp,))
         
         result = cursor.fetchone()
         if not result:
-            raise ValueError(f"No user found with email: {email}")
+            raise ValueError(f"No user found with timestamp: {timestamp}")
             
         return result
         
@@ -72,7 +73,7 @@ def update_user(user_data):
     cursor = None
     try:
         # Get current data for fields not being updated
-        current_data = get_current_user_data(user_data['email'])
+        current_data = get_current_user_data(user_data['timestamp'])
         
         # Prepare update fields - only update what's provided in the XML
         update_fields = {
@@ -101,7 +102,7 @@ def update_user(user_data):
             city = %s,
             postcode = %s,
             updated_at = NOW()
-        WHERE email = %s
+        WHERE timestamp = %s
         """
         
         cursor.execute(update_query, (
