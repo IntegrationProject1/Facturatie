@@ -140,11 +140,8 @@ def create_xml_message(user):
 
 def send_to_rabbitmq(xml):
     queues = ["crm_user_create", "kassa_user_create", "frontend_user_create"]
-    connection = None
-    channel = None
-
+    
     try:
-        # 1. Establish connection with retry logic
         params = pika.ConnectionParameters(
             host=os.environ["RABBITMQ_HOST"],
             port=int(os.environ["RABBITMQ_PORT"]),
@@ -154,86 +151,42 @@ def send_to_rabbitmq(xml):
                 os.environ["RABBITMQ_PASSWORD"]
             ),
             heartbeat=600,
-            blocked_connection_timeout=300,
-            connection_attempts=3,  # Retry up to 3 times
-            retry_delay=5  # Wait 5 seconds between retries
+            blocked_connection_timeout=300
         )
         
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
 
-        # 2. Enable publisher confirms (for reliability)
-        channel.confirm_delivery()
-
-        # 3. Declare exchange (ensures it exists)
+        # Declare exchange as TOPIC type to match existing configuration
         channel.exchange_declare(
             exchange="user",
-            exchange_type="direct",
+            exchange_type="topic",  # Changed from 'direct' to 'topic'
             durable=True
         )
 
-        # 4. Process each queue
         for queue in queues:
-            try:
-                # Declare queue with additional settings
-                channel.queue_declare(
-                    queue=queue,
-                    durable=True,
-                    arguments={
-                        'x-message-ttl': 86400000,  # 24h TTL for messages
-                        'x-queue-mode': 'lazy'  # Better for large messages
-                    }
+            channel.queue_declare(queue=queue, durable=True)
+            # Ensure the routing pattern matches topic exchange expectations
+            channel.queue_bind(
+                exchange="user",
+                queue=queue,
+                routing_key=f"user.create.{queue}"
+            )
+            channel.basic_publish(
+                exchange="user",
+                routing_key=f"user.create.{queue}",
+                body=xml,
+                properties=pika.BasicProperties(
+                    delivery_mode=2  # Make messages persistent
                 )
+            )
+            logger.info(f"Sent XML message to {queue}")
 
-                # Bind queue to exchange
-                channel.queue_bind(
-                    queue=queue,
-                    exchange="user",
-                    routing_key=f"user.create.{queue}"
-                )
-
-                # Publish with delivery confirmation
-                if channel.basic_publish(
-                    exchange="user",
-                    routing_key=f"user.create.{queue}",
-                    body=xml,
-                    properties=pika.BasicProperties(
-                        delivery_mode=2,  # Make message persistent
-                        content_type="application/xml",
-                        timestamp=int(time.time())
-                    ),
-                    mandatory=True  # Ensure message is routed
-                ):
-                    logger.info(f"Successfully sent to {queue}")
-                else:
-                    logger.error(f"Message not confirmed for {queue}")
-                    return False
-
-            except pika.exceptions.AMQPError as e:
-                logger.error(f"Queue {queue} error: {str(e)}")
-                # Continue trying other queues even if one fails
-                continue
-
+        connection.close()
         return True
-
-    except pika.exceptions.AMQPConnectionError as e:
-        logger.error(f"Connection failed: {str(e)}")
-        return False
-    except pika.exceptions.AMQPChannelError as e:
-        logger.error(f"Channel error: {str(e)}")
-        return False
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+        logger.error(f"RabbitMQ Error: {e}")
         return False
-    finally:
-        # 5. Clean up resources properly
-        try:
-            if channel and channel.is_open:
-                channel.close()
-            if connection and connection.is_open:
-                connection.close()
-        except Exception as e:
-            logger.warning(f"Cleanup error: {str(e)}")
 
 # Initialize database for safety and to avoid errors
 def initialize_database():
