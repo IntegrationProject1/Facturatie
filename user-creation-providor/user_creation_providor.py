@@ -90,7 +90,7 @@ def create_xml_message(user):
     
     # Action info
     ET.SubElement(xml, "ActionType").text = "CREATE"
-    ET.SubElement(xml, "UUID").text = str(user['timestamp'])  # Using hhmmssms format as ID
+    ET.SubElement(xml, "UUID").text = user['timestamp'].strftime('%Y%m%d%H%M%S%f')  # Format timestamp as UUID
     ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
     ET.SubElement(xml, "EncryptedPassword").text = user.get('pass', '')
     
