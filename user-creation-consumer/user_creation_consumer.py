@@ -2,14 +2,15 @@ import pika
 import os
 import logging
 import xml.etree.ElementTree as ET
-import mysql.connector
+import mysql.connector 
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Load environment variables and check if user already exists
-def user_exists(email):
+def user_exists(timestamp):
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
         user=os.getenv("DB_USER"),
@@ -19,7 +20,7 @@ def user_exists(email):
     cursor = conn.cursor()
     
     try:
-        cursor.execute("SELECT id FROM client WHERE email = %s", (email,))
+        cursor.execute("SELECT id FROM client WHERE timestamp = %s", (timestamp,))
         return cursor.fetchone() is not None
     except Exception as e:
         logger.error(f"Error checking user existence: {e}")
@@ -57,8 +58,8 @@ def create_user(user_data):
     
     try:
         # Check if user already exists
-        if user_exists(user_data['email']):
-            logger.warning(f"User with email {user_data['email']} already exists")
+        if user_exists(user_data['timestamp']):
+            logger.warning(f"User with timestamp {user_data['timestamp']} already exists")
             return False
         
         # Prepare data for FossBilling schema
@@ -95,7 +96,7 @@ def create_user(user_data):
         ))
         
         conn.commit()
-        logger.info(f"Created new client: {user_data['email']}")
+        logger.info(f"Created new client: {user_data['timestamp']}")
         return True
         
     except Exception as e:
