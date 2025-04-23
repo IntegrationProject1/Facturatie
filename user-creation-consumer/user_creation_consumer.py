@@ -64,7 +64,9 @@ def create_user(user_data):
         
         # Prepare data for FossBilling schema
         from datetime import datetime
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = user_data['timestamp']
+        parsed_timestamp = datetime.strptime(now, "%H%M%S%f")
+        user_data['timestamp'] = parsed_timestamp.strftime("%H%M%S%f")
         
         insert_query = """
         INSERT INTO client (
