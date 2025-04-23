@@ -13,11 +13,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Disable pika logging
-pika_logger = logging.getLogger("pika")
-pika_logger.handlers.clear()  # Removes any existing handlers
-pika_logger.propagate = False
-pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
+# # Disable pika logging
+# pika_logger = logging.getLogger("pika")
+# pika_logger.handlers.clear()  # Removes any existing handlers
+# pika_logger.propagate = False
+# pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
 
 open('logfile.log', 'w').close()  # Clear previous log file
 
