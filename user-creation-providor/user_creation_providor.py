@@ -30,13 +30,11 @@ def get_db_connection():
         database=os.environ["DB_NAME"]
     )
 
-# Get new users from database that have not been processed yet
 def get_new_users():
     # Establish connection
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     
-    # Get users that have not been processed yet and order by creation date (oldest first)
     try:
         cursor.execute("""
             SELECT 
@@ -51,20 +49,12 @@ def get_new_users():
         """)
         users = cursor.fetchall()
         
-        # Process each user to add the formatted timestamp
         for user in users:
             created_at = user['created_at']
             if isinstance(created_at, str):
-                created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
-            # Format as hhmmssms (e.g., 142536789 for 14:25:36.78)
-            timestamp = (
-                f"{created_at.hour:02d}"
-                f"{created_at.minute:02d}"
-                f"{created_at.second:02d}"
-                f"{created_at.microsecond // 1000:02d}"
-            )
-            user['timestamp'] = int(timestamp)
-            
+                created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+            user['timestamp'] = created_at  # Keep full datetime with microseconds
+        
         return users
     except mysql.connector.Error as err:
         logger.error(f"Database error: {err}")
@@ -72,6 +62,7 @@ def get_new_users():
     finally:
         cursor.close()
         conn.close()
+
 
 # Mark user as processed so it won't be processed again
 def mark_as_processed(client_id):
