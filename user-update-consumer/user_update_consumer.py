@@ -164,9 +164,6 @@ def parse_user_xml(xml_data):
             'action_type': root.find('ActionType').text,
             'email': root.find('EmailAddress').text
         }
-        timestamp_str = root.find('timestamp').text
-        parsed_timestamp = datetime.strptime(timestamp_str, "%H%M%S%f")
-        user_data['timestamp'] = parsed_timestamp.strftime("%H%M%S%f")
         
         # Optional fields
         if root.find('FirstName') is not None:
