@@ -3,10 +3,22 @@ import os
 import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
+import time
 
-# Configure logging for the application
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# For logging and debugging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Disable pika logging
+pika_logger = logging.getLogger("pika")
+pika_logger.handlers.clear()  # Removes any existing handlers
+pika_logger.propagate = False
+pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
+
+open('logfile.log', 'w').close()  # Clear previous log file
 
 # Establish a connection to the MySQL database
 def get_db_connection():
@@ -207,15 +219,20 @@ def start_consumer():
     channel = connection.channel()
     
     try:
-        queues = [ 'facturatie_user_update'] # to make it come to us (facturatie) instead of the others
-        for queue in queues:
-            channel.queue_declare(queue=queue, durable=True)
-            channel.basic_consume(
-                queue=queue,
-                on_message_callback=on_message,
-                auto_ack=False
-            )
-        
+        # Explicitly declare queue before consuming
+        queue_name = 'facturatie_user_update'
+        channel.queue_declare(queue=queue_name, durable=True)
+
+        # Add a short delay before consuming
+        logger.info("Waiting 2 seconds before consuming to ensure queue is ready...")
+        time.sleep(2)
+
+        channel.basic_consume(
+            queue=queue_name,
+            on_message_callback=on_message,
+            auto_ack=False
+        )
+
         logger.info("Waiting for user update messages...")
         channel.start_consuming()
         

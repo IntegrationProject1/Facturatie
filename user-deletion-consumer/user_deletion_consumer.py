@@ -1,9 +1,22 @@
 import pika, os, logging
 import xml.etree.ElementTree as ET
 import mysql.connector
+import time
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# For logging and debugging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Disable pika logging
+pika_logger = logging.getLogger("pika")
+pika_logger.handlers.clear()  # Removes any existing handlers
+pika_logger.propagate = False
+pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
+
+open('logfile.log', 'w').close()  # Clear previous log file
 
 # no need to use load_dotenv() here
 # docker will pass the environment variables directly to the container
@@ -70,15 +83,21 @@ def start_consumer():
     channel = connection.channel()
     
     try:
-        for queue in ['kassa_user_delete', 'crm_user_delete', 'frontend_user_delete']:
-            channel.queue_declare(queue=queue, durable=True)
-            # queue=queue -> this is the queue we are listening to
-            # durable=True -> the queue will survive a RabbitMQ server restart
-            # the whole function ensures that the queues exists and are ready to receive messages
-            channel.basic_consume(queue=queue, on_message_callback=on_message)
-            # whenever a new message is received, the on_message_callback function is called
-        
-        logger.info("Listening for deletion messages...")
+        # Explicitly declare queue before consuming
+        queue_name = 'facturatie_user_delete'
+        channel.queue_declare(queue=queue_name, durable=True)
+
+        # Add a short delay before consuming
+        logger.info("Waiting 2 seconds before consuming to ensure queue is ready...")
+        time.sleep(2)
+
+        channel.basic_consume(
+            queue=queue_name,
+            on_message_callback=on_message,
+            auto_ack=False
+        )
+
+        logger.info("Waiting for user deletion messages...")
         channel.start_consuming()
 
         # you can interrupt the consumer with CTRL+C

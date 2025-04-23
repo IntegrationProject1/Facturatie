@@ -46,29 +46,10 @@ services:
     networks:
       - facturatie_network
 
-  #User Creation Listener Service
-  user-listener:
-    build: ./user-creation-listener
-    container_name: facturatie_user_listener
-    restart: unless-stopped
-    depends_on:
-      - db
-    environment:
-      DB_HOST: db
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      RABBITMQ_HOST: ${RABBITMQ_HOST}
-      RABBITMQ_PORT: ${RABBITMQ_PORT}
-      RABBITMQ_USER: ${RABBITMQ_USER}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
-    networks:
-      - facturatie_network
-
-#User Update Listener Service
-  user-update-listener:
-    build: ./user-update-listener
-    container_name: facturatie_update_listener
+  #User Creation providor Service
+  user-creation-providor:
+    build: ./user-creation-providor
+    container_name: facturatie_user_providor
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -76,10 +57,10 @@ services:
     networks:
       - facturatie_network
 
-# User update Consumer Service
-  user-update-consumer:
-    build: ./user-update-consumer
-    container_name: facturatie_update_consumer
+#User Update providor Service
+  user-update-providor:
+    build: ./user-update-providor
+    container_name: facturatie_update_providor
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -87,11 +68,11 @@ services:
     networks:
       - facturatie_network
 
-#User Deletion Listener Service
-  user-deletion-listener:
-    build: ./user-deletion-listener
-    container_name: facturatie_deletion_listener
-    restart: unless-stopped  # Critical for auto-recovery
+#User Deletion providor Service
+  user-deletion-providor:
+    build: ./user-deletion-providor
+    container_name: facturatie_deletion_providor
+    restart: unless-stopped
     env_file: .env
     depends_on:
       - db
@@ -128,6 +109,21 @@ services:
     env_file: .env
     depends_on:
       - db
+    networks:
+      - facturatie_network
+
+# Heartbeat Service to CRM
+  heartbeat:
+    build: ./heartbeat
+    container_name: facturatie_heartbeat
+    restart: always
+    depends_on:
+      - db
+    environment:
+      RABBITMQ_HOST: ${RABBITMQ_HOST}
+      RABBITMQ_PORT: ${RABBITMQ_PORT}
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
     networks:
       - facturatie_network
 

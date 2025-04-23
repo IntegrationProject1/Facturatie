@@ -3,10 +3,22 @@ import os
 import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
+import time
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# For logging and debugging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Disable pika logging
+pika_logger = logging.getLogger("pika")
+pika_logger.handlers.clear()  # Removes any existing handlers
+pika_logger.propagate = False
+pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
+
+open('logfile.log', 'w').close()  # Clear previous log file
 
 # Load environment variables and check if user already exists
 def user_exists(email):
@@ -46,7 +58,6 @@ def extract_postcode(address):
 
 # Create user in FossBilling database
 def create_user(user_data):
-
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
         user=os.getenv("DB_USER"),
@@ -74,24 +85,25 @@ def create_user(user_data):
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         
+        # Use None for optional fields if they are not provided
         cursor.execute(insert_query, (
             'client',                              # role
-            user_data['email'],                    # email
+            user_data['email'],                    # email (required)
             'active',                              # status
-            user_data['first_name'],               # first_name
-            user_data['last_name'],               # last_name
-            user_data['phone'],                   # phone
-            user_data['business_name'],           # company
-            user_data['vat_number'],               # company_vat
-            user_data['address'],                  # address_1
-            extract_city(user_data['address']),    # city (extracted from address)
-            '',                                    # state (empty as it's in address)
-            extract_postcode(user_data['address']), # postcode
-            'BE',                                 # country (default to Belgium)
-            'EUR',                                # currency
-            now,                                  # created_at
-            now,                                  # updated_at
-            0                                     # is_processed
+            user_data['first_name'],               # first_name (required)
+            user_data['last_name'],                # last_name (required)
+            user_data.get('phone'),                # phone (optional)
+            user_data.get('business_name'),        # company (optional)
+            user_data.get('vat_number'),           # company_vat (optional)
+            user_data.get('address'),              # address_1 (optional)
+            extract_city(user_data.get('address')) if user_data.get('address') else None,  # city (optional)
+            '',                                    # state (optional, empty string)
+            extract_postcode(user_data.get('address')) if user_data.get('address') else None,  # postcode (optional)
+            'BE',                                  # country (default to Belgium)
+            'EUR',                                 # currency (default to EUR)
+            now,                                   # created_at
+            now,                                   # updated_at
+            0                                      # is_processed
         ))
         
         conn.commit()
@@ -108,25 +120,33 @@ def create_user(user_data):
 
 # Parse XML message
 def parse_user_xml(xml_data):
-
     try:
         root = ET.fromstring(xml_data)
-        
+
+        # Utility function to safely get text from XML elements
+        def safe_find(element, tag):
+            found_element = element.find(tag)
+            if found_element is not None:
+                return found_element.text
+            else:
+                logger.warning(f"Missing expected XML element: {tag}")
+                return None
+
         business = root.find('Business')
-        
+
         return {
-            'action_type': root.find('ActionType').text,
-            'user_id': root.find('UserID').text,
-            'action_time': root.find('TimeOfAction').text,
-            'first_name': root.find('FirstName').text,
-            'last_name': root.find('LastName').text,
-            'phone': root.find('PhoneNumber').text,
-            'email': root.find('EmailAddress').text,
-            'business_name': business.find('BusinessName').text,
-            'business_email': business.find('BusinessEmail').text,
-            'address': business.find('RealAddress').text,
-            'vat_number': business.find('BTWNumber').text,
-            'billing_address': business.find('FacturationAddress').text
+            'action_type': safe_find(root, 'ActionType'),
+            'user_id': safe_find(root, 'UserID'),
+            'action_time': safe_find(root, 'TimeOfAction'),
+            'first_name': safe_find(root, 'FirstName'),
+            'last_name': safe_find(root, 'LastName'),
+            'phone': safe_find(root, 'PhoneNumber'),
+            'email': safe_find(root, 'EmailAddress'),
+            'business_name': safe_find(business, 'BusinessName') if business else None,
+            'business_email': safe_find(business, 'BusinessEmail') if business else None,
+            'address': safe_find(business, 'RealAddress') if business else None,
+            'vat_number': safe_find(business, 'BTWNumber') if business else None,
+            'billing_address': safe_find(business, 'FacturationAddress') if business else None
         }
     except Exception as e:
         logger.error(f"XML parsing failed: {e}")
@@ -156,6 +176,7 @@ def on_message(channel, method, properties, body):
     except Exception as e:
         logger.error(f"Message processing failed: {e}")
         channel.basic_nack(method.delivery_tag, requeue=False)
+        logger.info("Message failed and will not be requeued.")
 
 # Start the RabbitMQ consumer
 def start_consumer():
@@ -169,18 +190,23 @@ def start_consumer():
         )
     ))
     channel = connection.channel()
+    channel.basic_qos(prefetch_count=1)  # Prevents RabbitMQ from sending multiple messages before acknowledging
     
     try:
-        # Declare all queues we want to listen to
-        queues = ['crm_user_create', 'frontend_user_create', 'kassa_user_create']
-        for queue in queues:
-            channel.queue_declare(queue=queue, durable=True)
-            channel.basic_consume(
-                queue=queue,
-                on_message_callback=on_message,
-                auto_ack=False
-            )
-        
+        # Explicitly declare queue before consuming
+        queue_name = 'facturatie_user_create'
+        channel.queue_declare(queue=queue_name, durable=True)
+
+        # Add a short delay before consuming
+        logger.info("Waiting 2 seconds before consuming to ensure queue is ready...")
+        time.sleep(2)
+
+        channel.basic_consume(
+            queue=queue_name,
+            on_message_callback=on_message,
+            auto_ack=False
+        )
+
         logger.info("Waiting for user creation messages...")
         channel.start_consuming()
         
