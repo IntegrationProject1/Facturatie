@@ -52,8 +52,10 @@ def get_new_users():
         for user in users:
             created_at = user['created_at']
             if isinstance(created_at, str):
-                created_at = datetime.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-            user['timestamp'] = created_at  # Keep full datetime with microseconds
+                # Parse the string into a datetime object
+                created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+            # Format the timestamp as ISO 8601 with microseconds
+            user['timestamp'] = created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
         
         return users
     except mysql.connector.Error as err:
@@ -90,7 +92,7 @@ def create_xml_message(user):
     
     # Action info
     ET.SubElement(xml, "ActionType").text = "CREATE"
-    ET.SubElement(xml, "UUID").text = user['timestamp'].strftime('%Y%m%d%H%M%S%f')  # Format timestamp as UUID
+    ET.SubElement(xml, "UUID").text = user['timestamp']
     ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
     ET.SubElement(xml, "EncryptedPassword").text = user.get('pass', '')
     
