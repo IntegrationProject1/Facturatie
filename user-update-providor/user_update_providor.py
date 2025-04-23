@@ -13,6 +13,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Disable pika logging
+pika_logger = logging.getLogger("pika")
+pika_logger.handlers.clear()  # Removes any existing handlers
+pika_logger.propagate = False
+pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
+
+open('logfile.log', 'w').close()  # Clear previous log file
+
 # Database connection
 def get_db_connection():
     return mysql.connector.connect(
@@ -92,6 +100,7 @@ def create_xml_message(user):
 
 # Send XML message to RabbitMQ for processing
 def send_to_rabbitmq(xml):
+    queues = ["crm_user_update", "kassa_user_update", "frontend_user_update"]
 
     try:
         params = pika.ConnectionParameters(
@@ -108,21 +117,20 @@ def send_to_rabbitmq(xml):
         
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
-        
-        channel.queue_declare(queue="facturatie_user_update", durable=True)  
-        channel.basic_publish(
-            exchange="user",
-            routing_key="facturatie.user.update",  
-            body=xml,
-            properties=pika.BasicProperties(
-                delivery_mode=2  # Make message persistent
+
+        for queue in queues:
+            channel.queue_declare(queue=queue, durable=True)
+            channel.basic_publish(
+                exchange="user",
+                routing_key=f"user.update.{queue}",
+                body=xml
             )
-        )
-        
+            logger.info(f"Sent XML message to {queue}")
+
         connection.close()
         return True
     except Exception as e:
-        logger.error(f"RabbitMQ Error: {e}")     #error handling + logging
+        logger.error(f"RabbitMQ Error: {e}")
         return False
 
 # Mark user update as processed
@@ -157,6 +165,7 @@ def initialize_database():
                 processed BOOLEAN DEFAULT FALSE,
                 INDEX (client_id),
                 INDEX (processed)
+            )
         """)
         conn.commit()
     except Exception as e:
@@ -168,7 +177,7 @@ def initialize_database():
 # Main loop
 if __name__ == "__main__":
     initialize_database()
-    logger.info("Starting user update listener")
+    logger.info("Starting user update providor")
     
     while True:
         try:

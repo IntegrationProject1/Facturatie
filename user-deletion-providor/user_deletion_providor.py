@@ -13,6 +13,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Disable pika logging
+pika_logger = logging.getLogger("pika")
+pika_logger.handlers.clear()  # Removes any existing handlers
+pika_logger.propagate = False
+pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
+
+open('logfile.log', 'w').close()  # Clear previous log file
+
 # Database connection
 def get_db_connection():
     return mysql.connector.connect(
@@ -73,10 +81,10 @@ def create_deletion_xml(email):
     ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
     return '<?xml version="1.0"?>\n' + ET.tostring(xml, encoding='unicode')
 
-# Send XML message to RabbitMQ exchange for user deletion
+# Send XML message to multiple RabbitMQ queues
 def send_to_rabbitmq(xml):
+    queues = ["crm_user_delete", "kassa_user_delete", "frontend_user_delete"]
 
-    # Establish connection to RabbitMQ
     try:
         params = pika.ConnectionParameters(
             host=os.environ["RABBITMQ_HOST"],
@@ -92,17 +100,19 @@ def send_to_rabbitmq(xml):
         
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
-        
-        channel.queue_declare(queue="facturatie_user_delete", durable=True)
-        channel.basic_publish(
-            exchange="user",
-            routing_key="facturatie.user.delete",
-            body=xml    #sending xml message to RabbitMQ
-        )
-        
+
+        for queue in queues:
+            channel.queue_declare(queue=queue, durable=True)
+            channel.basic_publish(
+                exchange="user",
+                routing_key=f"user.delete.{queue}",
+                body=xml
+            )
+            logger.info(f"Sent XML message to {queue}")
+
         connection.close()
         return True
-    except Exception as e:  #error handling + logging
+    except Exception as e:
         logger.error(f"RabbitMQ Error: {e}")
         return False
 
@@ -133,7 +143,7 @@ def initialize_database():
 # Get pending deletions every 5 seconds, create XML message and send to RabbitMQ
 if __name__ == "__main__":
     initialize_database()
-    logger.info("Starting user deletion listener")  #logging
+    logger.info("Starting user deletion providor")  #logging
     
     while True:
         try:
