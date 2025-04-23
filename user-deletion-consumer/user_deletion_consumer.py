@@ -52,8 +52,8 @@ def on_message(channel, method, properties, body):
 
         # first we need to parse the timestamp string into a datetime object
         # then we can format it into the right format (so that it's the same everywhere)
-        parsed_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S.%fZ")
-        formatted_timestamp = parsed_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        parsed_timestamp = datetime.strptime(timestamp_str, "%H%M%S%f")
+        formatted_timestamp = parsed_timestamp.strftime("%H%M%S%f")
         
         delete_client(formatted_timestamp)
         channel.basic_ack(delivery_tag=method.delivery_tag) # 'tells' RabbitMQ that the message was processed successfully
