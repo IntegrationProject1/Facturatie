@@ -112,30 +112,33 @@ def create_user(user_data):
  
 # Parse XML message
 def parse_user_xml(xml_data):
- 
     try:
         root = ET.fromstring(xml_data)
-       
+
+        # Utility function to safely get text from XML elements
+        def safe_find(element, tag):
+            found_element = element.find(tag)
+            if found_element is not None:
+                return found_element.text
+            else:
+                logger.warning(f"Missing expected XML element: {tag}")
+                return None
+
         business = root.find('Business')
 
-        if business is None:
-
-            raise ValueError("Missing <Business> element in XML")
- 
-       
         return {
-            'action_type': root.find('ActionType').text,
-            'uuid': root.find('UUID').text,
-            'action_time': root.find('TimeOfAction').text,
-            'first_name': root.find('FirstName').text,
-            'last_name': root.find('LastName').text,
-            'phone': root.find('PhoneNumber').text,
-            'email': root.find('EmailAddress').text,
-            'business_name': business.find('BusinessName').text,
-            'business_email': business.find('BusinessEmail').text,
-            'address': business.find('RealAddress').text,
-            'vat_number': business.find('BTWNumber').text,
-            'billing_address': business.find('FacturationAddress').text
+            'action_type': safe_find(root, 'ActionType'),
+            'uuid': safe_find(root, 'UUID'),
+            'action_time': safe_find(root, 'TimeOfAction'),
+            'first_name': safe_find(root, 'FirstName'),
+            'last_name': safe_find(root, 'LastName'),
+            'phone': safe_find(root, 'PhoneNumber'),
+            'email': safe_find(root, 'EmailAddress'),
+            'business_name': safe_find(business, 'BusinessName') if business else None,
+            'business_email': safe_find(business, 'BusinessEmail') if business else None,
+            'address': safe_find(business, 'RealAddress') if business else None,
+            'vat_number': safe_find(business, 'BTWNumber') if business else None,
+            'billing_address': safe_find(business, 'FacturationAddress') if business else None
         }
     except Exception as e:
         logger.error(f"XML parsing failed: {e}")
@@ -204,4 +207,3 @@ def start_consumer():
  
 if __name__ == "__main__":
     start_consumer()
- 
