@@ -101,6 +101,8 @@ def on_message(channel, method, properties, body):
         # Clean UUID timestamp (remove 'Z' if present)
         if user_data['uuid'].endswith('Z'):
             user_data['uuid'] = user_data['uuid'][:-1]
+        if 'T' in user_data['uuid']:
+            user_data['uuid'] = user_data['uuid'].replace('T', ' ')       
  
         # Delete user from database
         delete_user(user_data)
