@@ -4,11 +4,28 @@ import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
 from datetime import datetime
+from dotenv import load_dotenv
+load_dotenv()
 
+# Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def user_exists(uuid_timestamp):
+def format_timestamp(raw_timestamp):
+    try:
+        # Strip 'Z' and convert 'T' to ' '
+        if raw_timestamp.endswith('Z'):
+            raw_timestamp = raw_timestamp[:-1]
+        raw_timestamp = raw_timestamp.replace('T', ' ')
+        
+        # Parse to datetime and convert to full microsecond string
+        dt = datetime.strptime(raw_timestamp, "%Y-%m-%d %H:%M:%S.%f")
+        return dt.strftime("%Y-%m-%d %H:%M:%S.%f")
+    except Exception as e:
+        logger.error(f"Timestamp formatting failed: {e}")
+        raise
+
+def get_client_id_by_timestamp(uuid_timestamp):
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
         user=os.getenv("DB_USER"),
@@ -18,7 +35,8 @@ def user_exists(uuid_timestamp):
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT id FROM client WHERE timestamp = %s", (uuid_timestamp,))
-        return cursor.fetchone() is not None
+        result = cursor.fetchone()
+        return result[0] if result else None
     finally:
         cursor.close()
         conn.close()
@@ -33,12 +51,14 @@ def update_user(user_data):
     cursor = conn.cursor()
     try:
         uuid_timestamp = user_data['uuid']
-        if not user_exists(uuid_timestamp):
-            logger.warning(f"Client with timestamp {uuid_timestamp} not found - nothing to update")
+        client_id = get_client_id_by_timestamp(uuid_timestamp)
+
+        if client_id is None:
+            logger.warning(f"Client with timestamp {uuid_timestamp} not found")
             return False
 
         update_fields = []
-        update_values = []
+        values = []
 
         mappings = {
             'EncryptedPassword': 'pass',
@@ -53,20 +73,20 @@ def update_user(user_data):
             'FacturationAddress': 'address_2'
         }
 
-        for key, db_field in mappings.items():
-            if key in user_data:
+        for tag, db_field in mappings.items():
+            if tag in user_data:
                 update_fields.append(f"{db_field} = %s")
-                update_values.append(user_data[key])
+                values.append(user_data[tag])
 
         if not update_fields:
             logger.info("No update fields provided.")
             return False
 
-        update_values.append(uuid_timestamp)
-        query = f"UPDATE client SET {', '.join(update_fields)}, updated_at = NOW() WHERE timestamp = %s"
-        cursor.execute(query, tuple(update_values))
+        values.append(uuid_timestamp)
+        sql = f"UPDATE client SET {', '.join(update_fields)}, updated_at = NOW(6) WHERE timestamp = %s"
+        cursor.execute(sql, tuple(values))
         conn.commit()
-        logger.info(f"Updated client with timestamp: {uuid_timestamp}")
+        logger.info(f"Updated client ID {client_id} with timestamp {uuid_timestamp}")
         return True
     except Exception as e:
         logger.error(f"Update failed: {e}")
@@ -81,20 +101,20 @@ def parse_user_xml(xml_data):
         root = ET.fromstring(xml_data)
         user_data = {
             'action_type': root.find('ActionType').text,
-            'uuid': root.find('UUID').text,
+            'uuid': format_timestamp(root.find('UUID').text),
             'action_time': root.find('TimeOfAction').text
         }
 
         for tag in ['EncryptedPassword', 'FirstName', 'LastName', 'PhoneNumber', 'EmailAddress']:
             el = root.find(tag)
-            if el is not None:
+            if el is not None and el.text:
                 user_data[tag] = el.text
 
         business = root.find('Business')
         if business is not None:
             for tag in ['BusinessName', 'BusinessEmail', 'RealAddress', 'BTWNumber', 'FacturationAddress']:
                 el = business.find(tag)
-                if el is not None:
+                if el is not None and el.text:
                     user_data[tag] = el.text
 
         return user_data
@@ -111,11 +131,6 @@ def on_message(channel, method, properties, body):
             logger.warning(f"Ignoring non-UPDATE action: {user_data['action_type']}")
             channel.basic_ack(method.delivery_tag)
             return
-
-        if user_data['uuid'].endswith('Z'):
-            user_data['uuid'] = user_data['uuid'][:-1]
-        if 'T' in user_data['uuid']:
-            user_data['uuid'] = user_data['uuid'].replace('T', ' ')
 
         update_user(user_data)
         channel.basic_ack(method.delivery_tag)
