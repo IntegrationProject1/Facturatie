@@ -11,20 +11,19 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Convert XML timestamp to MySQL microsecond format
 def format_timestamp(raw_timestamp):
     try:
-        # Strip 'Z' and convert 'T' to ' '
         if raw_timestamp.endswith('Z'):
             raw_timestamp = raw_timestamp[:-1]
         raw_timestamp = raw_timestamp.replace('T', ' ')
-        
-        # Parse to datetime and convert to full microsecond string
         dt = datetime.strptime(raw_timestamp, "%Y-%m-%d %H:%M:%S.%f")
-        return dt.strftime("%Y-%m-%d %H:%M:%S.%f")
+        return dt.strftime("%Y-%m-%d %H:%M:%S.%f")  # 6 microseconden!
     except Exception as e:
         logger.error(f"Timestamp formatting failed: {e}")
         raise
 
+# Check if client exists
 def get_client_id_by_timestamp(uuid_timestamp):
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
@@ -41,6 +40,7 @@ def get_client_id_by_timestamp(uuid_timestamp):
         cursor.close()
         conn.close()
 
+# Update user
 def update_user(user_data):
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
@@ -60,6 +60,7 @@ def update_user(user_data):
         update_fields = []
         values = []
 
+        # Map XML fields to DB columns
         mappings = {
             'EncryptedPassword': 'pass',
             'FirstName': 'first_name',
@@ -82,6 +83,7 @@ def update_user(user_data):
             logger.info("No update fields provided.")
             return False
 
+        # Update + timestamp
         values.append(uuid_timestamp)
         sql = f"UPDATE client SET {', '.join(update_fields)}, updated_at = NOW(6) WHERE timestamp = %s"
         cursor.execute(sql, tuple(values))
@@ -96,6 +98,7 @@ def update_user(user_data):
         cursor.close()
         conn.close()
 
+# Parse XML
 def parse_user_xml(xml_data):
     try:
         root = ET.fromstring(xml_data)
@@ -105,11 +108,13 @@ def parse_user_xml(xml_data):
             'action_time': root.find('TimeOfAction').text
         }
 
+        # Main fields
         for tag in ['EncryptedPassword', 'FirstName', 'LastName', 'PhoneNumber', 'EmailAddress']:
             el = root.find(tag)
             if el is not None and el.text:
                 user_data[tag] = el.text
 
+        # Business subfields
         business = root.find('Business')
         if business is not None:
             for tag in ['BusinessName', 'BusinessEmail', 'RealAddress', 'BTWNumber', 'FacturationAddress']:
@@ -122,6 +127,7 @@ def parse_user_xml(xml_data):
         logger.error(f"XML parsing failed: {e}")
         raise
 
+# Callback
 def on_message(channel, method, properties, body):
     try:
         logger.info(f"Received message from {method.routing_key}")
@@ -139,6 +145,7 @@ def on_message(channel, method, properties, body):
         logger.error(f"Message processing failed: {e}")
         channel.basic_nack(method.delivery_tag, requeue=False)
 
+# Consumer setup
 def start_consumer():
     connection = pika.BlockingConnection(pika.ConnectionParameters(
         host=os.getenv("RABBITMQ_HOST"),
