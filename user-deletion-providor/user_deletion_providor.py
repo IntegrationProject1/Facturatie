@@ -126,21 +126,14 @@ def send_to_rabbitmq(xml):
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
 
-        # Zorg dat de exchange bestaat
-        channel.exchange_declare(exchange='user', exchange_type='topic', durable=True)
-
-        # Queue aanmaken en binden
         for queue in queues:
             channel.queue_declare(queue=queue, durable=True)
-            channel.queue_bind(exchange='user', queue=queue, routing_key=f"user.delete.{queue}")
-
-            # Publiceren naar de juiste routing key
             channel.basic_publish(
-                exchange="user",
-                routing_key=f"user.delete.{queue}",
+                exchange="",
+                routing_key=queue,
                 body=xml
             )
-            logger.debug(f"Published deletion message to queue: {queue}")
+            logger.info(f"Published deletion message to queue: {queue}")
 
         connection.close()
         return True
