@@ -4,8 +4,7 @@ import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
 from datetime import datetime
-from dotenv import load_dotenv
-load_dotenv()
+
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
