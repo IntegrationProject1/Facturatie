@@ -1,15 +1,17 @@
 import pika, os, logging
 import xml.etree.ElementTree as ET
 import mysql.connector
+ 
 from datetime import datetime
-
+ 
+# logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
+ 
 # no need to use load_dotenv() here
 # docker will pass the environment variables directly to the container
-
-def delete_client(timestamp):
+ 
+def delete_client(uuid_timestamp):
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
         user=os.getenv("DB_USER"),
@@ -17,54 +19,53 @@ def delete_client(timestamp):
         database=os.getenv("DB_NAME")
     )
     cursor = conn.cursor()
-
-
+ 
     # check to see if client exists
     # if we do not check if the client exists, we won't get an error on deletion
     # because technically nothing went wrong, the client just didn't exist
     try:
-        cursor.execute("SELECT id FROM client WHERE timestamp = %s", (timestamp,))
+        cursor.execute("SELECT id FROM client WHERE created_at = %s", (uuid_timestamp,))
         user = cursor.fetchone()
-    
-    # so now i only delete the client if it exists -> helps with debugging if something goes wrong as well
+        # so now i only delete the client if it exists -> helps with debugging if something goes wrong as well
         if user:
-            cursor.execute("DELETE FROM client WHERE timestamp = %s", (timestamp,))
+            cursor.execute("DELETE FROM client WHERE created_at = %s", (uuid_timestamp,))
             conn.commit()
-            logger.info(f"Deleted client: {timestamp}")
+            logger.info(f"Deleted client: {uuid_timestamp}")
         else:
-            logger.warning(f"Client with timestamp {timestamp} not found - nothing to delete")
+            logger.warning(f"Client with created_at {uuid_timestamp} not found - nothing to delete")
     except Exception as e:
         logger.error(f"Deletion failed: {e}")
         conn.rollback()
     finally:
         cursor.close()
         conn.close()
-
-
+ 
 def on_message(channel, method, properties, body):
     # channel: the channel that received the message
     # method: information about the message (message metadata)
-    # properties: message properties (headrs, priority, ....)
-    # body: the message itself)
+    # properties: message properties (headers, priority, ....)
+    # body: the message itself
     try:
-        xml_data = body.decode() # converting message into string
-        timestamp_str = ET.fromstring(xml_data).find('UUID').text
-
-        # first we need to parse the timestamp string into a datetime object
-        # then we can format it into the right format (so that it's the same everywhere)
-        parsed_timestamp = datetime.strptime(timestamp_str, "%H%M%S%f")
-        formatted_timestamp = parsed_timestamp.strftime("%H%M%S%f")
-        
-        delete_client(formatted_timestamp)
-        channel.basic_ack(delivery_tag=method.delivery_tag) # 'tells' RabbitMQ that the message was processed successfully
+        xml_data = body.decode()  # converting message into string
+        root = ET.fromstring(xml_data)
+        # get the UUID from the XML (corresponds to created_at timestamp)
+        uuid_timestamp = root.find('UUID').text
+ 
+        # if UUID ends with Z (Zulu time = UTC), remove it for MySQL compatibility
+        if uuid_timestamp.endswith('Z'):
+            uuid_timestamp = uuid_timestamp[:-1]
+ 
+        delete_client(uuid_timestamp)
+ 
+        channel.basic_ack(delivery_tag=method.delivery_tag)  # 'tells' RabbitMQ that the message was processed successfully
         # the message is then removed from the queue
-
+ 
     except Exception as e:
         logger.error(f"Message processing failed: {e}")
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         # 'tells' RabbitMQ that the message processing failed
         # requeue=False -> the message is not requeued, but discarded or sent to a dead-letter queue
-
+ 
 def start_consumer():
     connection = pika.BlockingConnection(pika.ConnectionParameters(
         host=os.getenv("RABBITMQ_HOST"),
@@ -75,9 +76,8 @@ def start_consumer():
         )
     ))
     channel = connection.channel()
-    
-    # voor optimalisatie: geen for loop aangezien er maar 1 queue is
-    # voor optimalisatie: zien of er nog een channel nodig is
+    # for optimization: no for loop needed if there is only one queue
+    # see if another channel is needed
     try:
         for queue in ['facturatie_user_delete']:
             channel.queue_declare(queue=queue, durable=True)
@@ -86,10 +86,9 @@ def start_consumer():
             # the whole function ensures that the queues exists and are ready to receive messages
             channel.basic_consume(queue=queue, on_message_callback=on_message)
             # whenever a new message is received, the on_message_callback function is called
-        
         logger.info("Listening for deletion messages...")
         channel.start_consuming()
-
+ 
         # you can interrupt the consumer with CTRL+C
         # this just makes sure that the connection is closed properly
     except KeyboardInterrupt:
@@ -97,6 +96,6 @@ def start_consumer():
         channel.stop_consuming()
         connection.close()
         logger.info("Consumer stopped.")
-
+ 
 if __name__ == "__main__":
     start_consumer()
