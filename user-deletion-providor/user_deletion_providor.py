@@ -6,85 +6,74 @@ import time
 import logging
 from datetime import datetime
 
-# Logging setup
+# Enhanced logging setup
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='logfile.log'  # Changed to append mode instead of overwriting
+    handlers=[
+        logging.FileHandler('deletion_provider.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
-# Disable pika logging
-pika_logger = logging.getLogger("pika")
-pika_logger.handlers.clear()
-pika_logger.propagate = False
-pika_logger.setLevel(logging.WARNING)
-
-# Database connection
+# Database connection with retries and timeouts
 def get_db_connection():
-    return mysql.connector.connect(
-        host=os.environ["DB_HOST"],
-        user=os.environ["DB_USER"],
-        password=os.environ["DB_PASSWORD"],
-        database=os.environ["DB_NAME"],
-        connection_timeout=5  # Added connection timeout
-    )
+    retries = 5
+    delay = 5
+    
+    for attempt in range(retries):
+        try:
+            conn = mysql.connector.connect(
+                host=os.getenv('DB_HOST', 'db'),  # Default to 'db' if not set
+                user=os.getenv('DB_USER', 'root'),
+                password=os.getenv('DB_PASSWORD', ''),
+                database=os.getenv('DB_NAME', 'fossbilling'),
+                port=os.getenv('DB_PORT', '3306'),
+                connection_timeout=5,
+                connect_timeout=5
+            )
+            logger.info("Successfully connected to database")
+            return conn
+        except mysql.connector.Error as err:
+            logger.error(f"Connection attempt {attempt + 1} failed: {err}")
+            if attempt == retries - 1:
+                raise
+            time.sleep(delay)
 
-# Database wait
+# Wait for database to be ready
 def wait_for_db():
+    logger.info("Waiting for database connection...")
     while True:
         try:
             conn = get_db_connection()
             conn.close()
-            logger.info("Database connection successful")
+            logger.info("Database connection established")
             break
         except Exception as e:
-            logger.warning(f"Waiting for database... {e}")
+            logger.warning(f"Database not ready yet: {e}")
             time.sleep(5)
 
-# Get pending deletions
-def get_pending_deletions():
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    try:
-        cursor.execute("""
-            SELECT client_id, deleted_at, processed
-            FROM user_deletions_queue
-            WHERE processed = FALSE
-            ORDER BY deleted_at
-            LIMIT 50
-        """)
-        rows = cursor.fetchall()
-
-        logger.debug(f"Fetched {len(rows)} pending deletions")
-        return rows
-
-    except Exception as e:
-        logger.error(f"Database error: {e}")
-        return []
-    finally:
-        cursor.close()
-        conn.close()
-
-# Mark as processed
+# [Keep all your other functions the same, but update mark_as_processed]
 def mark_as_processed(client_id, deleted_at):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    conn = None
     try:
-        # Using both client_id and deleted_at as identifier
+        conn = get_db_connection()
+        cursor = conn.cursor()
         cursor.execute("""
             UPDATE user_deletions_queue
             SET processed = TRUE
             WHERE client_id = %s AND deleted_at = %s
         """, (client_id, deleted_at))
         conn.commit()
-        logger.debug(f"Marked client {client_id} as processed")
+        logger.info(f"Marked client {client_id} as processed")
     except Exception as e:
-        logger.error(f"Failed to mark deletion as processed: {e}")
-        conn.rollback()
+        logger.error(f"Failed to mark as processed: {e}")
+        if conn:
+            conn.rollback()
     finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            conn.close()
 
 # Create XML
 def create_deletion_xml(deletion):
@@ -171,34 +160,39 @@ def initialize_database():
 
 # Main loop
 if __name__ == "__main__":
-    wait_for_db()
-    initialize_database()
-    logger.info("Starting user deletion provider")
-
+    logger.info("Starting User Deletion Provider Service")
+    
     while True:
         try:
-            deletions = get_pending_deletions()
-
-            if not deletions:
-                logger.debug("No pending deletions found. Sleeping 5s...")
-                time.sleep(5)
-                continue
-
-            for deletion in deletions:
+            wait_for_db()
+            initialize_database()
+            
+            while True:
                 try:
-                    logger.info(f"Processing deletion for client {deletion['client_id']}")
-                    xml = create_deletion_xml(deletion)
-                    if send_to_rabbitmq(xml):
-                        mark_as_processed(deletion['client_id'], deletion['deleted_at'])
-                        logger.info(f"Successfully processed deletion for client {deletion['client_id']}")
-                    else:
-                        logger.error(f"Failed to send deletion for client {deletion['client_id']}")
-                except Exception as e:
-                    logger.error(f"Error processing deletion for client {deletion['client_id']}: {e}")
-                    time.sleep(1)  # Short pause between failed attempts
-
-            time.sleep(1)  # Reduced sleep time between batches
-
+                    deletions = get_pending_deletions()
+                    if not deletions:
+                        logger.debug("No pending deletions found")
+                        time.sleep(5)
+                        continue
+                        
+                    for deletion in deletions:
+                        try:
+                            logger.info(f"Processing deletion for client {deletion['client_id']}")
+                            xml = create_deletion_xml(deletion)
+                            if send_to_rabbitmq(xml):
+                                mark_as_processed(deletion['client_id'], deletion['deleted_at'])
+                            else:
+                                logger.error("Failed to send to RabbitMQ")
+                        except Exception as e:
+                            logger.error(f"Error processing client {deletion['client_id']}: {e}")
+                            
+                    time.sleep(1)
+                    
+                except mysql.connector.Error as db_err:
+                    logger.error(f"Database error in processing loop: {db_err}")
+                    time.sleep(10)
+                    break  # Will restart outer loop
+                    
         except Exception as e:
-            logger.error(f"Main loop error: {e}")
-            time.sleep(60)
+            logger.error(f"Fatal error in main loop: {e}")
+            time.sleep(30)
