@@ -8,6 +8,7 @@ from datetime import datetime
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+open('logfile.log', 'w').close()
 
 # Check if user exists
 def user_exists(uuid_timestamp):
