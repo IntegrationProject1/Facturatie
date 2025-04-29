@@ -4,11 +4,11 @@ import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
 
-# Setup logging
+# Logging instellen
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Check if user already exists
+# Check of gebruiker al bestaat via UUID (= timestamp)
 def user_exists(uuid_timestamp):
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
@@ -17,119 +17,109 @@ def user_exists(uuid_timestamp):
         database=os.getenv("DB_NAME")
     )
     cursor = conn.cursor()
-
     try:
         cursor.execute("SELECT id FROM client WHERE timestamp = %s", (uuid_timestamp,))
         return cursor.fetchone() is not None
-    except Exception as e:
-        logger.error(f"Error checking user existence: {e}")
-        raise
     finally:
         cursor.close()
         conn.close()
 
-# Parse XML into dictionary
-def parse_user_create_xml(xml_data):
+# XML parser
+def parse_user_xml(xml_data):
     try:
         root = ET.fromstring(xml_data)
 
-        def get_text(tag):
-            el = root.find(tag)
-            return el.text if el is not None else None
-
-        def get_business_text(tag):
-            el = root.find(f'Business/{tag}')
-            return el.text if el is not None else None
+        business = root.find('Business')
 
         return {
-            'action_type': get_text('ActionType'),
-            'uuid': get_text('UUID'),
-            'password': get_text('EncryptedPassword'),
-            'action_time': get_text('TimeOfAction'),
-            'first_name': get_text('FirstName'),
-            'last_name': get_text('LastName'),
-            'phone': get_text('PhoneNumber'),
-            'email': get_text('EmailAddress'),
-            'company': get_business_text('BusinessName'),
-            'company_email': get_business_text('BusinessEmail'),
-            'address_1': get_business_text('RealAddress'),
-            'company_vat': get_business_text('BTWNumber'),
-            'facturation_address': get_business_text('FacturationAddress')
+            'action_type': root.find('ActionType').text,
+            'uuid': root.find('UUID').text,
+            'timestamp': root.find('TimeOfAction').text,
+            'password': root.find('EncryptedPassword').text,
+            'first_name': root.findtext('FirstName', default=''),
+            'last_name': root.findtext('LastName', default=''),
+            'phone': root.findtext('PhoneNumber', default=''),
+            'email': root.findtext('EmailAddress', default=''),
+            'company': business.findtext('BusinessName', default='') if business is not None else '',
+            'company_email': business.findtext('BusinessEmail', default='') if business is not None else '',
+            'address': business.findtext('RealAddress', default='') if business is not None else '',
+            'vat': business.findtext('BTWNumber', default='') if business is not None else '',
+            'invoice_address': business.findtext('FacturationAddress', default='') if business is not None else ''
         }
-
     except Exception as e:
         logger.error(f"XML parsing failed: {e}")
         raise
 
-# Insert user into database
-def create_user(user_data):
-    conn = mysql.connector.connect(
-        host=os.getenv("DB_HOST"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME")
-    )
-    cursor = conn.cursor()
+# Gebruiker toevoegen aan DB
+def create_user(data):
+    if user_exists(data['uuid']):
+        logger.warning(f"User met timestamp {data['uuid']} bestaat al.")
+        return False
 
     try:
-        uuid_timestamp = user_data['uuid'].replace('T', ' ').replace('Z', '')
-
-        if user_exists(uuid_timestamp):
-            logger.warning(f"Client with timestamp {uuid_timestamp} already exists - skipping creation")
-            return False
-
-        query = """
+        conn = mysql.connector.connect(
+            host=os.getenv("DB_HOST"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            database=os.getenv("DB_NAME")
+        )
+        cursor = conn.cursor()
+        sql = """
             INSERT INTO client (
-                email, pass, status, first_name, last_name, phone,
-                company, company_vat, address_1, timestamp,
-                created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                role, email, pass, status, first_name, last_name,
+                phone, company, address_1, company_vat,
+                timestamp, created_at
+            ) VALUES (%s, %s, %s, 'active', %s, %s, %s, %s, %s, %s, %s, NOW())
         """
         values = (
-            user_data['email'],
-            user_data['password'],
-            'active',
-            user_data['first_name'],
-            user_data['last_name'],
-            user_data['phone'],
-            user_data['company'],
-            user_data['company_vat'],
-            user_data['address_1'],
-            uuid_timestamp
+            'client',
+            data['email'],
+            data['password'],
+            data['first_name'],
+            data['last_name'],
+            data['phone'],
+            data['company'],
+            data['address'],
+            data['vat'],
+            data['uuid']
         )
-        cursor.execute(query, values)
+        cursor.execute(sql, values)
         conn.commit()
-        logger.info(f"Created client: {uuid_timestamp}")
+        logger.info(f"Gebruiker aangemaakt: {data['email']} ({data['uuid']})")
         return True
-
     except Exception as e:
-        logger.error(f"User creation failed: {e}")
+        logger.error(f"Gebruiker aanmaken mislukt: {e}")
         conn.rollback()
         raise
     finally:
         cursor.close()
         conn.close()
 
-# RabbitMQ callback
+# Callback functie
 def on_message(channel, method, properties, body):
     try:
-        logger.info(f"Received message from {method.routing_key}")
-        user_data = parse_user_create_xml(body.decode())
+        logger.info(f"Bericht ontvangen via {method.routing_key}")
+        user_data = parse_user_xml(body.decode())
 
         if user_data['action_type'].upper() != 'CREATE':
-            logger.warning(f"Ignoring non-CREATE action: {user_data['action_type']}")
+            logger.warning(f"Ignoreren: niet-‘CREATE’ actie: {user_data['action_type']}")
             channel.basic_ack(method.delivery_tag)
             return
 
-        user_data['uuid'] = user_data['uuid'].replace('T', ' ').replace('Z', '')
+        # UUID format fix
+        if user_data['uuid'].endswith('Z'):
+            user_data['uuid'] = user_data['uuid'][:-1]
+        if 'T' in user_data['uuid']:
+            user_data['uuid'] = user_data['uuid'].replace('T', ' ')
+
         create_user(user_data)
         channel.basic_ack(method.delivery_tag)
 
     except Exception as e:
-        logger.error(f"Message processing failed: {e}")
+        logger.error(f"Fout tijdens verwerking: {e}")
         channel.basic_nack(method.delivery_tag, requeue=False)
 
-# Start RabbitMQ consumer
+# Consumer starten
 def start_consumer():
     connection = pika.BlockingConnection(pika.ConnectionParameters(
         host=os.getenv("RABBITMQ_HOST"),
@@ -142,24 +132,24 @@ def start_consumer():
     channel = connection.channel()
 
     try:
-        queue_name = 'facturatie_user_create'
-        channel.queue_declare(queue=queue_name, durable=True)
-        channel.basic_consume(
-            queue=queue_name,
-            on_message_callback=on_message,
-            auto_ack=False
-        )
+        queues = ['facturatie_user_create']
+        for queue in queues:
+            channel.queue_declare(queue=queue, durable=True)
+            channel.basic_consume(
+                queue=queue,
+                on_message_callback=on_message,
+                auto_ack=False
+            )
 
-        logger.info("Waiting for user creation messages...")
+        logger.info("Wachten op gebruikerscreatieberichten...")
         channel.start_consuming()
 
     except KeyboardInterrupt:
-        logger.info("Stopping consumer...")
+        logger.info("Consumer stoppen...")
         channel.stop_consuming()
         connection.close()
-        logger.info("Consumer stopped.")
     except Exception as e:
-        logger.error(f"Consumer failed: {e}")
+        logger.error(f"Consumer mislukt: {e}")
         raise
 
 if __name__ == "__main__":
