@@ -117,6 +117,11 @@ def parse_user_xml(xml_data):
         root = ET.fromstring(xml_data)
        
         business = root.find('Business')
+
+        if business is None:
+
+            raise ValueError("Missing <Business> element in XML")
+ 
        
         return {
             'action_type': root.find('ActionType').text,
