@@ -51,7 +51,7 @@ def get_new_users():
         conn.close()
 
 # Mark user as processed so it won't be processed again
-def mark_as_processed(client_id):
+def mark_as_processed(timestamp):
 
     # Establish connection
     conn = get_db_connection()
@@ -60,12 +60,12 @@ def mark_as_processed(client_id):
     # Insert user into processed_users table
     try:
         cursor.execute("""
-            INSERT INTO processed_users (client_id, processed_at)
+            INSERT INTO processed_users (timestamp, processed_at)
             VALUES (%s, NOW())
-        """, (client_id,))
+        """, (timestamp,))
         conn.commit()
     except mysql.connector.Error as err:    #error handling + logging
-        logger.error(f"Failed to mark user {client_id} as processed: {err}")
+        logger.error(f"Failed to mark user {timestamp} as processed: {err}")
     finally:           #closing cursor and connection
         cursor.close()
         conn.close()
