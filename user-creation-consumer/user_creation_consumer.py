@@ -128,6 +128,7 @@ def parse_user_xml(xml_data):
 
         return {
             'action_type': safe_find(root, 'ActionType'),
+            'timestamp': safe_find(root, 'UUID'),
             'uuid': safe_find(root, 'UUID'),
             'action_time': safe_find(root, 'TimeOfAction'),
             'first_name': safe_find(root, 'FirstName'),
