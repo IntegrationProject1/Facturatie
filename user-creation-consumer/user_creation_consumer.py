@@ -74,8 +74,8 @@ def create_user(user_data):
             role, email, status, first_name, last_name,
             phone, company, company_vat, address_1,
             city, state, postcode, country, currency,
-            created_at, updated_at, is_processed
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            created_at, updated_at, is_processed, timestamp
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
        
         cursor.execute(insert_query, (
@@ -95,7 +95,8 @@ def create_user(user_data):
             'EUR',                                # currency
             now,                                  # created_at
             now,                                  # updated_at
-            0                                     # is_processed
+            0,                                     # is_processed
+            user_data['uuid']                # timestamp
         ))
        
         conn.commit()
@@ -120,7 +121,7 @@ def parse_user_xml(xml_data):
        
         return {
             'action_type': root.find('ActionType').text,
-            'user_id': root.find('UserID').text,
+            'uuid': root.find('UUID').text,
             'action_time': root.find('TimeOfAction').text,
             'first_name': root.find('FirstName').text,
             'last_name': root.find('LastName').text,
