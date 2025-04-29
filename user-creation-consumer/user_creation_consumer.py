@@ -3,14 +3,12 @@ import os
 import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
-from datetime import datetime
 
-# Set up logging
+# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-open('logfile.log', 'w').close()
 
-# Check if user exists
+# Check if user already exists
 def user_exists(uuid_timestamp):
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
@@ -30,7 +28,40 @@ def user_exists(uuid_timestamp):
         cursor.close()
         conn.close()
 
-# Create user in FossBilling DB
+# Parse XML into dictionary
+def parse_user_create_xml(xml_data):
+    try:
+        root = ET.fromstring(xml_data)
+
+        def get_text(tag):
+            el = root.find(tag)
+            return el.text if el is not None else None
+
+        def get_business_text(tag):
+            el = root.find(f'Business/{tag}')
+            return el.text if el is not None else None
+
+        return {
+            'action_type': get_text('ActionType'),
+            'uuid': get_text('UUID'),
+            'password': get_text('EncryptedPassword'),
+            'action_time': get_text('TimeOfAction'),
+            'first_name': get_text('FirstName'),
+            'last_name': get_text('LastName'),
+            'phone': get_text('PhoneNumber'),
+            'email': get_text('EmailAddress'),
+            'company': get_business_text('BusinessName'),
+            'company_email': get_business_text('BusinessEmail'),
+            'address_1': get_business_text('RealAddress'),
+            'company_vat': get_business_text('BTWNumber'),
+            'facturation_address': get_business_text('FacturationAddress')
+        }
+
+    except Exception as e:
+        logger.error(f"XML parsing failed: {e}")
+        raise
+
+# Insert user into database
 def create_user(user_data):
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
@@ -41,7 +72,7 @@ def create_user(user_data):
     cursor = conn.cursor()
 
     try:
-        uuid_timestamp = user_data['uuid']
+        uuid_timestamp = user_data['uuid'].replace('T', ' ').replace('Z', '')
 
         if user_exists(uuid_timestamp):
             logger.warning(f"Client with timestamp {uuid_timestamp} already exists - skipping creation")
@@ -49,26 +80,21 @@ def create_user(user_data):
 
         query = """
             INSERT INTO client (
-                email, pass, status, first_name, last_name, phone_cc, phone,
-                company, address_1, city, state, postcode, country,
-                currency, timestamp, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                email, pass, status, first_name, last_name, phone,
+                company, company_vat, address_1, timestamp,
+                created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
         values = (
             user_data['email'],
-            user_data['password'],  # moet reeds gehashed zijn!
+            user_data['password'],
             'active',
             user_data['first_name'],
             user_data['last_name'],
-            user_data['phone_cc'],
             user_data['phone'],
             user_data['company'],
+            user_data['company_vat'],
             user_data['address_1'],
-            user_data['city'],
-            user_data['state'],
-            user_data['postcode'],
-            user_data['country'],
-            'EUR',
             uuid_timestamp
         )
         cursor.execute(query, values)
@@ -84,32 +110,7 @@ def create_user(user_data):
         cursor.close()
         conn.close()
 
-# Parse XML
-def parse_user_create_xml(xml_data):
-    try:
-        root = ET.fromstring(xml_data)
-
-        return {
-            'action_type': root.find('ActionType').text,
-            'uuid': root.find('UUID').text,
-            'email': root.find('Email').text,
-            'password': root.find('Password').text,
-            'first_name': root.find('FirstName').text,
-            'last_name': root.find('LastName').text,
-            'phone_cc': root.find('PhoneCC').text,
-            'phone': root.find('Phone').text,
-            'company': root.find('Company').text,
-            'address_1': root.find('Address1').text,
-            'city': root.find('City').text,
-            'state': root.find('State').text,
-            'postcode': root.find('Postcode').text,
-            'country': root.find('Country').text
-        }
-    except Exception as e:
-        logger.error(f"XML parsing failed: {e}")
-        raise
-
-# Callback
+# RabbitMQ callback
 def on_message(channel, method, properties, body):
     try:
         logger.info(f"Received message from {method.routing_key}")
@@ -120,12 +121,7 @@ def on_message(channel, method, properties, body):
             channel.basic_ack(method.delivery_tag)
             return
 
-        # Clean UUID timestamp
-        if user_data['uuid'].endswith('Z'):
-            user_data['uuid'] = user_data['uuid'][:-1]
-        if 'T' in user_data['uuid']:
-            user_data['uuid'] = user_data['uuid'].replace('T', ' ')
-
+        user_data['uuid'] = user_data['uuid'].replace('T', ' ').replace('Z', '')
         create_user(user_data)
         channel.basic_ack(method.delivery_tag)
 
@@ -133,7 +129,7 @@ def on_message(channel, method, properties, body):
         logger.error(f"Message processing failed: {e}")
         channel.basic_nack(method.delivery_tag, requeue=False)
 
-# Start consumer
+# Start RabbitMQ consumer
 def start_consumer():
     connection = pika.BlockingConnection(pika.ConnectionParameters(
         host=os.getenv("RABBITMQ_HOST"),
@@ -168,4 +164,3 @@ def start_consumer():
 
 if __name__ == "__main__":
     start_consumer()
-
