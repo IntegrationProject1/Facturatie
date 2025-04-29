@@ -48,7 +48,7 @@ def on_message(channel, method, properties, body):
     # body: the message itself)
     try:
         xml_data = body.decode() # converting message into string
-        timestamp_str = ET.fromstring(xml_data).find('Timestamp').text
+        timestamp_str = ET.fromstring(xml_data).find('UUID').text
 
         # first we need to parse the timestamp string into a datetime object
         # then we can format it into the right format (so that it's the same everywhere)
