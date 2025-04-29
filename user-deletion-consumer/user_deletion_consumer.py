@@ -22,7 +22,7 @@ def user_exists(uuid_timestamp):
     cursor = conn.cursor()
  
     try:
-        cursor.execute("SELECT id FROM client WHERE created_at = %s", (uuid_timestamp,))
+        cursor.execute("SELECT id FROM client WHERE timestamp = %s", (uuid_timestamp,))
         return cursor.fetchone() is not None
     except Exception as e:
         logger.error(f"Error checking user existence: {e}")
@@ -49,11 +49,11 @@ def delete_user(user_data):
  
         # check if user exists
         if not user_exists(uuid_timestamp):
-            logger.warning(f"Client with created_at {uuid_timestamp} not found - nothing to delete")
+            logger.warning(f"Client with timestamp {uuid_timestamp} not found - nothing to delete")
             return False
  
         # so now i only delete the client if it exists -> helps with debugging if something goes wrong as well
-        cursor.execute("DELETE FROM client WHERE created_at = %s", (uuid_timestamp,))
+        cursor.execute("DELETE FROM client WHERE timestamp = %s", (uuid_timestamp,))
         conn.commit()
         logger.info(f"Deleted client: {uuid_timestamp}")
         return True
