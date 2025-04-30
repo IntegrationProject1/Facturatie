@@ -148,13 +148,18 @@ def update_user(data):
         cursor.close()
         conn.close()
 
-# Callback function for RabbitMQ messages
 def on_message(channel, method, properties, body):
     try:
         logger.info(f"Received message via {method.routing_key}")
         logger.debug(f"Message body: {body.decode()}")
         
         user_data = parse_user_xml(body.decode())
+
+        # Check action type
+        if user_data['action_type'] != 'UPDATE':
+            logger.warning(f"Ignoring non-UPDATE action: {user_data['action_type']}")
+            channel.basic_ack(method.delivery_tag)
+            return
 
         # Format UUID/timestamp (same as creation consumer)
         if user_data['uuid'].endswith('Z'):
