@@ -48,8 +48,12 @@ jobs:
 
       - name: Run tests
         run: |
-          # Discover and run all tests in the repository
-          python -m unittest discover -s . -p '*_test.py'
+          python -m unittest discover -s user-creation-providor -p 'test_*.py'
+          python -m unittest discover -s user-creation-consumer -p 'test_*.py'
+          python -m unittest discover -s user-update-providor -p 'test_*.py'
+          python -m unittest discover -s user-update-consumer -p 'test_*.py'
+          python -m unittest discover -s user-deletion-providor -p 'test_*.py'
+          python -m unittest discover -s user-deletion-consumer -p 'test_*.py'
   
   deploy:
     runs-on: ubuntu-latest
