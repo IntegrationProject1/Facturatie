@@ -48,12 +48,12 @@ jobs:
 
       - name: Run tests
         run: |
-          python -m unittest discover -s user-creation-providor -p 'test_*.py'
-          python -m unittest discover -s user-creation-consumer -p 'test_*.py'
-          python -m unittest discover -s user-update-providor -p 'test_*.py'
-          python -m unittest discover -s user-update-consumer -p 'test_*.py'
-          python -m unittest discover -s user-deletion-providor -p 'test_*.py'
-          python -m unittest discover -s user-deletion-consumer -p 'test_*.py'
+          python -m unittest user-creation-providor/test_creation_providor.py
+          python -m unittest user-creation-consumer/test_creation_consumer.py
+          python -m unittest user-update-providor/test_update_providor.py
+          python -m unittest user-update-consumer/test_update_consumer.py
+          python -m unittest user-deletion-providor/test_deletion_providor.py
+          python -m unittest user-deletion-consumer/test_deletion_consumer.py
   
   deploy:
     runs-on: ubuntu-latest
