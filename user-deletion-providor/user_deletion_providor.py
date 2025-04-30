@@ -13,8 +13,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-open('logfile.log', 'w').close()  # Clear previous log file
-
 # Database connection
 def get_db_connection():
     return mysql.connector.connect(
