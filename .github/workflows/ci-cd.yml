@@ -39,7 +39,6 @@ jobs:
       - name: Install module dependencies
         run: |
           # Install requirements for each module
-          pip install -r facturatie/requirements.txt
           pip install -r user-creation-providor/requirements.txt
           pip install -r user-creation-consumer/requirements.txt
           pip install -r user-update-providor/requirements.txt
