@@ -127,6 +127,18 @@ services:
     networks:
       - facturatie_network
 
+# logging
+log-consumer:
+  build: ./log-consumer
+  container_name: facturatie_log_consumer
+  restart: unless-stopped
+  env_file: .env
+  depends_on:
+    - db
+  networks:
+    - facturatie_network
+
+
 networks:
   facturatie_network:
     name: facturatie_network
