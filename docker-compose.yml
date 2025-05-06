@@ -9,7 +9,7 @@ services:
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
-      - db_data:/var/lib/mysql
+      - /data/facturatie/mysql:/var/lib/mysql
     networks:
       - facturatie_network
 
@@ -27,7 +27,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - app_data:/var/www/html
+      - /data/facturatie/app:/var/www/html
     networks:
       - facturatie_network
 
@@ -142,7 +142,3 @@ networks:
   facturatie_network:
     name: facturatie_network
     driver: bridge
-
-volumes:
-  db_data:
-  app_data:
