@@ -20,7 +20,7 @@ jobs:
       - name: Build and run Docker containers
         if: github.ref == 'refs/heads/development'
         run: |
-          docker-compose up --build -d
+          docker compose up --build -d
 
   test:
     runs-on: ubuntu-latest
