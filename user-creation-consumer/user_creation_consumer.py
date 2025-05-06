@@ -8,41 +8,6 @@ import mysql.connector
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Extra logfunctie
-def send_log_message(service_name, status, code, message):
-    try:
-        xml_message = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Log>
-    <ServiceName>{service_name}</ServiceName>
-    <Status>{status}</Status>
-    <Code>{code}</Code>
-    <Message>{message}</Message>
-</Log>"""
-
-        connection = pika.BlockingConnection(pika.ConnectionParameters(
-            host=os.getenv("RABBITMQ_HOST"),
-            port=int(os.getenv("RABBITMQ_PORT")),
-            credentials=pika.PlainCredentials(
-                os.getenv("RABBITMQ_USER"),
-                os.getenv("RABBITMQ_PASSWORD")
-            )
-        ))
-        channel = connection.channel()
-        channel.exchange_declare(
-            exchange=os.getenv("RABBITMQ_LOG_EXCHANGE", "log_monitoring"),
-            exchange_type="direct",
-            durable=True
-        )
-        channel.basic_publish(
-            exchange=os.getenv("RABBITMQ_LOG_EXCHANGE", "log_monitoring"),
-            routing_key=os.getenv("RABBITMQ_LOG_QUEUE", "controlroom.log.events"),
-            body=xml_message,
-            properties=pika.BasicProperties(delivery_mode=2)
-        )
-        connection.close()
-    except Exception as e:
-        logger.critical(f"Logbericht verzenden mislukt: {e}")
-
 # Check of gebruiker al bestaat via UUID (= timestamp)
 def user_exists(uuid_timestamp):
     conn = mysql.connector.connect(
@@ -62,8 +27,7 @@ def user_exists(uuid_timestamp):
 # XML parser
 def parse_user_xml(xml_data):
     try:
-      #   root = ET.fromstring(xml_data)
-        root = ET.fromstring("<Broken")
+        root = ET.fromstring(xml_data)
 
         business = root.find('Business')
 
@@ -84,15 +48,12 @@ def parse_user_xml(xml_data):
         }
     except Exception as e:
         logger.error(f"XML parsing failed: {e}")
-        send_log_message("user-creation-consumer", "ERROR", "XML_PARSE_ERROR", str(e))
         raise
 
 # Gebruiker toevoegen aan DB
 def create_user(data):
     if user_exists(data['uuid']):
-        msg = f"User met timestamp {data['uuid']} bestaat al."
-        logger.warning(msg)
-        send_log_message("user-creation-consumer", "WARNING", "USER_EXISTS", msg)
+        logger.warning(f"User met timestamp {data['uuid']} bestaat al.")
         return False
 
     try:
@@ -127,9 +88,7 @@ def create_user(data):
         logger.info(f"Gebruiker aangemaakt: {data['email']} ({data['uuid']})")
         return True
     except Exception as e:
-        msg = f"Gebruiker aanmaken mislukt: {e}"
-        logger.error(msg)
-        send_log_message("user-creation-consumer", "ERROR", "CREATE_FAIL", msg)
+        logger.error(f"Gebruiker aanmaken mislukt: {e}")
         conn.rollback()
         raise
     finally:
@@ -143,12 +102,11 @@ def on_message(channel, method, properties, body):
         user_data = parse_user_xml(body.decode())
 
         if user_data['action_type'].upper() != 'CREATE':
-            msg = f"Ignoreren: niet-‘CREATE’ actie: {user_data['action_type']}"
-            logger.warning(msg)
-            send_log_message("user-creation-consumer", "WARNING", "NON_CREATE_ACTION", msg)
+            logger.warning(f"Ignoreren: niet-‘CREATE’ actie: {user_data['action_type']}")
             channel.basic_ack(method.delivery_tag)
             return
 
+        # UUID format fix
         if user_data['uuid'].endswith('Z'):
             user_data['uuid'] = user_data['uuid'][:-1]
         if 'T' in user_data['uuid']:
@@ -158,9 +116,7 @@ def on_message(channel, method, properties, body):
         channel.basic_ack(method.delivery_tag)
 
     except Exception as e:
-        msg = f"Fout tijdens verwerking: {e}"
-        logger.error(msg)
-        send_log_message("user-creation-consumer", "CRITICAL", "PROCESS_FAIL", msg)
+        logger.error(f"Fout tijdens verwerking: {e}")
         channel.basic_nack(method.delivery_tag, requeue=False)
 
 # Consumer starten
@@ -193,9 +149,7 @@ def start_consumer():
         channel.stop_consuming()
         connection.close()
     except Exception as e:
-        msg = f"Consumer mislukt: {e}"
-        logger.error(msg)
-        send_log_message("user-creation-consumer", "CRITICAL", "CONSUMER_CRASH", msg)
+        logger.error(f"Consumer mislukt: {e}")
         raise
 
 if __name__ == "__main__":
