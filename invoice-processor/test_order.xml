@@ -1,0 +1,11 @@
+<Order>
+  <Date>2025-05-06T10:00:00</Date>
+  <UUID>2025-05-06T10:00:00</UUID>
+  <Products>
+    <Product>
+      <ProductNR>123</ProductNR>
+      <Quantity>2</Quantity>
+      <UnitPrice>19.99</UnitPrice>
+    </Product>
+  </Products>
+</Order>

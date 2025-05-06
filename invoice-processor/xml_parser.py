@@ -2,15 +2,24 @@ import xml.etree.ElementTree as ET
 
 def parse_order(xml_string):
     root = ET.fromstring(xml_string)
+
+    date = root.find("Date").text
+    uuid = root.find("UUID").text
+
     products = []
-    for product in root.find('Products').findall('Product'):
+    for product in root.find("Products").findall("Product"):
+        product_nr = product.find("ProductNR").text
+        quantity = product.find("Quantity").text
+        unit_price = product.find("UnitPrice").text
+
         products.append({
-            'product_nr': float(product.find('ProductNR').text),
-            'quantity': float(product.find('Quantity').text),
-            'unit_price': float(product.find('UnitPrice').text),
+            "product_nr": product_nr,
+            "quantity": quantity,
+            "unit_price": unit_price
         })
+
     return {
-        'date': root.find('Date').text,
-        'uuid': root.find('UUID').text,
-        'products': products
+        "date": date,
+        "uuid": uuid,
+        "products": products
     }
