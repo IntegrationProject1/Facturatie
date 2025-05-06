@@ -32,26 +32,26 @@ services:
       - facturatie_network
 
   # phpMyAdmin Service 
-  phpmyadmin:
-    image: phpmyadmin/phpmyadmin
-    container_name: facturatie_phpmyadmin
-    depends_on:
-      - db
-    ports:
-      - "30082:80"  
-      - "30083:443" #HTTPS port
-    environment:
-      PMA_HOST: db
-      PMA_USER: ${DB_USER}
-      PMA_PASSWORD: ${DB_PASSWORD}
-      # SSL configuration
-      PMA_ABSOLUTE_URI: https://yourdomain.com:30083
-    volumes:
-      - ./ssl/cert.pem:/etc/ssl/certs/cert.pem
-      - ./ssl/key.pem:/etc/ssl/private/key.pem
-      - ./phpmyadmin/config.user.inc.php:/etc/phpmyadmin/config.user.inc.php
-    networks:
-      - facturatie_network
+phpmyadmin:
+  image: phpmyadmin/phpmyadmin
+  container_name: facturatie_phpmyadmin
+  restart: always
+  depends_on:
+    - db
+  ports:
+    - "30082:80"
+    - "30083:443"
+  environment:
+    PMA_HOST: db
+    PMA_ARBITRARY: 1
+    UPLOAD_LIMIT: 128M
+    PMA_ABSOLUTE_URI: https://integrationproject-2425s2-001.westeurope.cloudapp.azure.com:30083/
+  volumes:
+    - ./ssl/cert.pem:/etc/ssl/certs/cert.pem
+    - ./ssl/key.pem:/etc/ssl/private/key.pem
+    - ./phpmyadmin/config.user.inc.php:/etc/phpmyadmin/config.user.inc.php
+  networks:
+    - facturatie_network
 
   #User Creation providor Service
   user-creation-providor:
