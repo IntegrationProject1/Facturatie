@@ -38,15 +38,18 @@ services:
     depends_on:
       - db
     ports:
-      - "30082:80"
+      - "30082:80"  
+      - "30083:443" #HTTPS port
     environment:
       PMA_HOST: db
       PMA_USER: ${DB_USER}
       PMA_PASSWORD: ${DB_PASSWORD}
-
-      PMA_ARBITRARY: 1
-      PHPMyADMIN_USER: ${PHPMyADMIN_USER}
-      PHPMyADMIN_PASSWORD: ${PHPMyADMIN_PASSWORD}
+      # SSL configuration
+      PMA_ABSOLUTE_URI: https://yourdomain.com:30083
+    volumes:
+      - ./ssl/cert.pem:/etc/ssl/certs/cert.pem
+      - ./ssl/key.pem:/etc/ssl/private/key.pem
+      - ./phpmyadmin/config.user.inc.php:/etc/phpmyadmin/config.user.inc.php
     networks:
       - facturatie_network
 
