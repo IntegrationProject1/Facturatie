@@ -62,7 +62,8 @@ def user_exists(uuid_timestamp):
 # XML parser
 def parse_user_xml(xml_data):
     try:
-        root = ET.fromstring(xml_data)
+      #   root = ET.fromstring(xml_data)
+        root = ET.fromstring("<Broken")
 
         business = root.find('Business')
 
