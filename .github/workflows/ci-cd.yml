@@ -6,33 +6,39 @@ on:
       - development
       - main
 
+env:
+  WORKING_DIR: /home/runner/work/${{ github.repository }}/${{ github.repository }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        with:
-          path: /home/ehbstudent/facturatie 
-
-      - name: Load environment variables
-        run: |
-          # Copy .env file from repository to working directory
-          cp .env /home/ehbstudent/facturatie/.env || true
-          echo "Environment file prepared"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
       - name: Build and run containers
         if: github.ref == 'refs/heads/development'
-        working-directory: /home/ehbstudent/facturatie
+        env:
+          RABBITMQ_HOST: ${{ secrets.RABBITMQ_HOST }}
+          RABBITMQ_PORT: ${{ secrets.RABBITMQ_PORT }}
+          RABBITMQ_USER: ${{ secrets.RABBITMQ_USER }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
+          MYSQL_USER: ${{ secrets.MYSQL_USER }}
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           docker compose down || true
           docker compose up --build -d
-          sleep 10  # Wait for services to initialize
-          docker compose restart  # Ensure fresh start
+          sleep 10
+          docker compose restart
 
   test:
     runs-on: ubuntu-latest
@@ -51,13 +57,15 @@ jobs:
       - name: Install dependencies
         run: |
           pip install pytest
-          for module in */requirements.txt; do
-            pip install -r "$module"
+          for dir in *-{providor,consumer}; do
+            if [ -f "$dir/requirements.txt" ]; then
+              pip install -r "$dir/requirements.txt"
+            fi
           done
 
       - name: Run tests
         run: |
-          pytest */test_*.py
+          pytest */*test_*.py
 
   deploy:
     runs-on: ubuntu-latest
