@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # MySQL Database Service
   db:
@@ -11,23 +9,15 @@ services:
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
-      - /data/facturatie/mysql:/var/lib/mysql
+      - db_data:/var/lib/mysql
     networks:
       - facturatie_network
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 5s
-      timeout: 10s
-      retries: 10
 
   # FossBilling Application Service
   app:
     image: fossbilling/fossbilling:latest
     container_name: facturatie_app
     depends_on:
-      db:
-        condition: service_healthy
-    links:
       - db
     ports:
       - "30081:80"
@@ -37,10 +27,9 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - /data/facturatie/app:/var/www/html
+      - app_data:/var/www/html
     networks:
       - facturatie_network
-    restart: unless-stopped
 
   # phpMyAdmin Service 
   phpmyadmin:
@@ -57,7 +46,7 @@ services:
     networks:
       - facturatie_network
 
-  # User Creation Provider Service
+  #User Creation providor Service
   user-creation-providor:
     build: ./user-creation-providor
     container_name: facturatie_user_providor
@@ -68,7 +57,7 @@ services:
     networks:
       - facturatie_network
 
-  # User Update Provider Service
+#User Update providor Service
   user-update-providor:
     build: ./user-update-providor
     container_name: facturatie_update_providor
@@ -79,7 +68,7 @@ services:
     networks:
       - facturatie_network
 
-  # User Deletion Provider Service
+#User Deletion providor Service
   user-deletion-providor:
     build: ./user-deletion-providor
     container_name: facturatie_deletion_providor
@@ -90,7 +79,7 @@ services:
     networks:
       - facturatie_network
 
-  # User Deletion Consumer Service
+# User Deletion Consumer Service
   user-deletion-consumer:
     build: ./user-deletion-consumer
     container_name: facturatie_deletion_consumer
@@ -101,7 +90,7 @@ services:
     networks:
       - facturatie_network
 
-  # User Creation Consumer Service
+# User Creation Consumer Service
   user-creation-consumer:
     build: ./user-creation-consumer
     container_name: facturatie_creation_consumer
@@ -112,7 +101,7 @@ services:
     networks:
       - facturatie_network
 
-  # User Update Consumer Service
+# User Update Consumer Service
   user-update-consumer:
     build: ./user-update-consumer
     container_name: facturatie_update_consumer
@@ -123,7 +112,18 @@ services:
     networks:
       - facturatie_network
 
-  # Heartbeat Service to CRM
+# logging
+  log-consumer:
+    build: ./log-consumer
+    container_name: facturatie_log_consumer
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
+# Heartbeat Service to CRM
   heartbeat:
     build: ./heartbeat
     container_name: facturatie_heartbeat
@@ -142,4 +142,7 @@ networks:
   facturatie_network:
     name: facturatie_network
     driver: bridge
-    attachable: true
+
+volumes:
+  db_data:
+  app_data:
