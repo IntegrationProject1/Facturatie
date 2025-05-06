@@ -43,6 +43,10 @@ services:
       PMA_HOST: db
       PMA_USER: ${DB_USER}
       PMA_PASSWORD: ${DB_PASSWORD}
+
+      PMA_ARBITRARY: 1
+      PHPMyADMIN_USER: ${PHPMyADMIN_USER}
+      PHPMyADMIN_PASSWORD: ${PHPMyADMIN_PASSWORD}
     networks:
       - facturatie_network
 
