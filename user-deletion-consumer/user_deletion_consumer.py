@@ -1,15 +1,18 @@
-import pika, os, logging
+import pika
+import os
+import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
 from datetime import datetime
-
+from dotenv import load_dotenv
+load_dotenv()
+ 
+# Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# no need to use load_dotenv() here
-# docker will pass the environment variables directly to the container
-
-def delete_client(timestamp):
+ 
+# Load environment variables and check if user exists
+def user_exists(uuid_timestamp):
     conn = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
         user=os.getenv("DB_USER"),
@@ -17,54 +20,105 @@ def delete_client(timestamp):
         database=os.getenv("DB_NAME")
     )
     cursor = conn.cursor()
-
-
-    # check to see if client exists
-    # if we do not check if the client exists, we won't get an error on deletion
-    # because technically nothing went wrong, the client just didn't exist
+ 
     try:
-        cursor.execute("SELECT id FROM client WHERE timestamp = %s", (timestamp,))
-        user = cursor.fetchone()
-    
-    # so now i only delete the client if it exists -> helps with debugging if something goes wrong as well
-        if user:
-            cursor.execute("DELETE FROM client WHERE timestamp = %s", (timestamp,))
-            conn.commit()
-            logger.info(f"Deleted client: {timestamp}")
-        else:
-            logger.warning(f"Client with timestamp {timestamp} not found - nothing to delete")
+        cursor.execute("SELECT id FROM client WHERE timestamp = %s", (uuid_timestamp,))
+        return cursor.fetchone() is not None
     except Exception as e:
-        logger.error(f"Deletion failed: {e}")
-        conn.rollback()
+        logger.error(f"Error checking user existence: {e}")
+        raise
     finally:
         cursor.close()
         conn.close()
-
-
+ 
+# Delete user from FossBilling database
+def delete_user(user_data):
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+    cursor = conn.cursor()
+ 
+    # check if client exists
+    # if we do not check if the client exists, we won't get an error on deletion
+    # because technically nothing went wrong, the client just didn't exist
+    try:
+        uuid_timestamp = user_data['uuid']
+ 
+        # check if user exists
+        if not user_exists(uuid_timestamp):
+            logger.warning(f"Client with timestamp {uuid_timestamp} not found - nothing to delete")
+            return False
+ 
+        # so now i only delete the client if it exists -> helps with debugging if something goes wrong as well
+        cursor.execute("DELETE FROM client WHERE timestamp = %s", (uuid_timestamp,))
+        conn.commit()
+        logger.info(f"Deleted client: {uuid_timestamp}")
+        return True
+ 
+    except Exception as e:
+        logger.error(f"Deletion failed: {e}")
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+ 
+# Parse XML message
+def parse_user_xml(xml_data):
+    try:
+        root = ET.fromstring(xml_data)
+ 
+        return {
+            'action_type': root.find('ActionType').text,
+            'uuid': root.find('UUID').text,
+            'action_time': root.find('TimeOfAction').text
+        }
+    except Exception as e:
+        logger.error(f"XML parsing failed: {e}")
+        raise
+ 
+# Callback for when a message is received from RabbitMQ
 def on_message(channel, method, properties, body):
     # channel: the channel that received the message
     # method: information about the message (message metadata)
-    # properties: message properties (headrs, priority, ....)
-    # body: the message itself)
+    # properties: message properties (headers, priority, ....)
+    # body: the message itself
     try:
-        xml_data = body.decode() # converting message into string
-        timestamp_str = ET.fromstring(xml_data).find('Timestamp').text
-
-        # first we need to parse the timestamp string into a datetime object
-        # then we can format it into the right format (so that it's the same everywhere)
-        parsed_timestamp = datetime.strptime(timestamp_str, "%H%M%S%f")
-        formatted_timestamp = parsed_timestamp.strftime("%H%M%S%f")
-        
-        delete_client(formatted_timestamp)
-        channel.basic_ack(delivery_tag=method.delivery_tag) # 'tells' RabbitMQ that the message was processed successfully
+        logger.info(f"Received message from {method.routing_key}")
+ 
+        # Parse XML
+        user_data = parse_user_xml(body.decode())
+ 
+        # Only process DELETE actions
+        if user_data['action_type'].upper() != 'DELETE':
+            logger.warning(f"Ignoring non-DELETE action: {user_data['action_type']}")
+            channel.basic_ack(method.delivery_tag)
+            return
+ 
+        # Clean UUID timestamp (remove 'Z' if present)
+        if user_data['uuid'].endswith('Z'):
+            user_data['uuid'] = user_data['uuid'][:-1]
+        if 'T' in user_data['uuid']:
+            user_data['uuid'] = user_data['uuid'].replace('T', ' ')       
+ 
+        # Delete user from database
+        delete_user(user_data)
+ 
+        # Acknowledge message
+        channel.basic_ack(method.delivery_tag)
+        # 'tells' RabbitMQ that the message was processed successfully
         # the message is then removed from the queue
-
+ 
     except Exception as e:
         logger.error(f"Message processing failed: {e}")
-        channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        channel.basic_nack(method.delivery_tag, requeue=False)
         # 'tells' RabbitMQ that the message processing failed
         # requeue=False -> the message is not requeued, but discarded or sent to a dead-letter queue
-
+ 
+# Start the RabbitMQ consumer
 def start_consumer():
     connection = pika.BlockingConnection(pika.ConnectionParameters(
         host=os.getenv("RABBITMQ_HOST"),
@@ -75,28 +129,35 @@ def start_consumer():
         )
     ))
     channel = connection.channel()
-    
-    # voor optimalisatie: geen for loop aangezien er maar 1 queue is
-    # voor optimalisatie: zien of er nog een channel nodig is
+ 
     try:
-        for queue in ['facturatie_user_delete']:
+        # Declare all queues we want to listen to
+        queues = ['facturatie_user_delete']
+        for queue in queues:
             channel.queue_declare(queue=queue, durable=True)
+            channel.basic_consume(
+                queue=queue,
+                on_message_callback=on_message,
+                auto_ack=False
+            )
             # queue=queue -> this is the queue we are listening to
             # durable=True -> the queue will survive a RabbitMQ server restart
-            # the whole function ensures that the queues exists and are ready to receive messages
-            channel.basic_consume(queue=queue, on_message_callback=on_message)
+            # the whole function ensures that the queues exist and are ready to receive messages
             # whenever a new message is received, the on_message_callback function is called
-        
-        logger.info("Listening for deletion messages...")
+ 
+        logger.info("Waiting for user deletion messages...")
         channel.start_consuming()
-
+ 
         # you can interrupt the consumer with CTRL+C
         # this just makes sure that the connection is closed properly
     except KeyboardInterrupt:
-        logger.info("Stopping consumer ...")
+        logger.info("Stopping consumer...")
         channel.stop_consuming()
         connection.close()
         logger.info("Consumer stopped.")
-
+    except Exception as e:
+        logger.error(f"Consumer failed: {e}")
+        raise
+ 
 if __name__ == "__main__":
     start_consumer()
