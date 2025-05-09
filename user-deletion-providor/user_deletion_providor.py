@@ -5,6 +5,7 @@ from datetime import datetime
 import mysql.connector
 import time
 import logging
+from logger import send_log  # NIEUW
 
 # Logging setup
 logging.basicConfig(
@@ -47,6 +48,7 @@ def get_users_to_delete():
         return users
     except mysql.connector.Error as err:
         logger.error(f"Database error: {err}")
+        send_log("user-deletion-provider", "ERROR", 501, f"Database error: {err}")
         return []
     finally:
         cursor.close()
@@ -66,6 +68,7 @@ def mark_as_deleted(client_id):
         conn.commit()
     except mysql.connector.Error as err:
         logger.error(f"Failed to mark client {client_id} as processed: {err}")
+        send_log("user-deletion-provider", "ERROR", 502, f"Failed to mark client {client_id} as processed: {err}")
     finally:
         cursor.close()
         conn.close()
@@ -127,6 +130,7 @@ def send_to_rabbitmq(xml):
         return True
     except Exception as e:
         logger.error(f"RabbitMQ Error: {e}")
+        send_log("user-deletion-provider", "ERROR", 503, f"RabbitMQ Error: {e}")
         return False
 
 # Optioneel: initialiseer tabel als die nog niet bestaat
@@ -147,6 +151,7 @@ def initialize_database():
         conn.commit()
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
+        send_log("user-deletion-provider", "CRITICAL", 504, f"DB init failed: {e}")
     finally:
         cursor.close()
         conn.close()
@@ -155,6 +160,7 @@ def initialize_database():
 if __name__ == "__main__":
     initialize_database()
     logger.info("Starting user deletion provider")
+    send_log("user-deletion-provider", "INFO", 100, "Provider started")
 
     while True:
         try:
@@ -165,10 +171,13 @@ if __name__ == "__main__":
                 if send_to_rabbitmq(xml):
                     mark_as_deleted(user['client_id'])
                     logger.info(f"Processed deletion for client {user['client_id']} with timestamp {user['timestamp']}")
+                    send_log("user-deletion-provider", "SUCCESS", 200, f"Deleted user {user['client_id']}")
                 else:
                     logger.error(f"Failed to process deletion for client {user['client_id']}")
+                    send_log("user-deletion-provider", "ERROR", 500, f"Failed to delete user {user['client_id']}")
 
             time.sleep(5)
         except Exception as e:
             logger.error(f"Processing error: {e}")
+            send_log("user-deletion-provider", "CRITICAL", 999, f"Unhandled exception: {e}")
             time.sleep(60)
