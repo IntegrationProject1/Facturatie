@@ -5,6 +5,7 @@ from datetime import datetime
 import mysql.connector
 import time
 import logging
+from log_forwarder import send_log_to_controlroom  # <-- NIEUW
 
 # Logging setup
 logging.basicConfig(
@@ -47,6 +48,7 @@ def get_users_to_delete():
         return users
     except mysql.connector.Error as err:
         logger.error(f"Database error: {err}")
+        send_log_to_controlroom("user-deletion-provider", "ERROR", "DB_QUERY_FAILED", str(err))  # <-- NIEUW
         return []
     finally:
         cursor.close()
@@ -66,6 +68,7 @@ def mark_as_deleted(client_id):
         conn.commit()
     except mysql.connector.Error as err:
         logger.error(f"Failed to mark client {client_id} as processed: {err}")
+        send_log_to_controlroom("user-deletion-provider", "ERROR", "DB_UPDATE_FAILED", str(err))  # <-- NIEUW
     finally:
         cursor.close()
         conn.close()
@@ -127,6 +130,7 @@ def send_to_rabbitmq(xml):
         return True
     except Exception as e:
         logger.error(f"RabbitMQ Error: {e}")
+        send_log_to_controlroom("user-deletion-provider", "ERROR", "RABBITMQ_ERROR", str(e))  # <-- NIEUW
         return False
 
 # Optioneel: initialiseer tabel als die nog niet bestaat
@@ -147,6 +151,7 @@ def initialize_database():
         conn.commit()
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
+        send_log_to_controlroom("user-deletion-provider", "ERROR", "DB_INIT_FAILED", str(e))  # <-- NIEUW
     finally:
         cursor.close()
         conn.close()
@@ -167,8 +172,10 @@ if __name__ == "__main__":
                     logger.info(f"Processed deletion for client {user['client_id']} with timestamp {user['timestamp']}")
                 else:
                     logger.error(f"Failed to process deletion for client {user['client_id']}")
+                    send_log_to_controlroom("user-deletion-provider", "ERROR", "SEND_FAILED", f"Client ID: {user['client_id']}")  # <-- NIEUW
 
             time.sleep(5)
         except Exception as e:
             logger.error(f"Processing error: {e}")
+            send_log_to_controlroom("user-deletion-provider", "CRITICAL", "LOOP_FAILED", str(e))  # <-- NIEUW
             time.sleep(60)

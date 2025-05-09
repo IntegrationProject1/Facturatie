@@ -1,10 +1,10 @@
-import pika
 import os
 import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
 from datetime import datetime
 from dotenv import load_dotenv
+from log_forwarder import send_log_to_controlroom  # <-- NIEUW
 load_dotenv()
  
 # Set up logging
@@ -26,6 +26,7 @@ def user_exists(uuid_timestamp):
         return cursor.fetchone() is not None
     except Exception as e:
         logger.error(f"Error checking user existence: {e}")
+        send_log_to_controlroom("user-deletion-consumer", "ERROR", "USER_CHECK_FAILED", str(e))  # <-- NIEUW
         raise
     finally:
         cursor.close()
@@ -60,6 +61,7 @@ def delete_user(user_data):
  
     except Exception as e:
         logger.error(f"Deletion failed: {e}")
+        send_log_to_controlroom("user-deletion-consumer", "ERROR", "DELETION_FAILED", str(e))  # <-- NIEUW
         conn.rollback()
         raise
     finally:
@@ -78,6 +80,7 @@ def parse_user_xml(xml_data):
         }
     except Exception as e:
         logger.error(f"XML parsing failed: {e}")
+        send_log_to_controlroom("user-deletion-consumer", "ERROR", "XML_PARSE_FAILED", str(e))  # <-- NIEUW
         raise
  
 # Callback for when a message is received from RabbitMQ
@@ -95,8 +98,7 @@ def on_message(channel, method, properties, body):
         # Only process DELETE actions
         if user_data['action_type'].upper() != 'DELETE':
             logger.warning(f"Ignoring non-DELETE action: {user_data['action_type']}")
-            channel.basic_ack(method.delivery_tag)
-            return
+            return channel.basic_ack(method.delivery_tag)
  
         # Clean UUID timestamp (remove 'Z' if present)
         if user_data['uuid'].endswith('Z'):
@@ -114,6 +116,7 @@ def on_message(channel, method, properties, body):
  
     except Exception as e:
         logger.error(f"Message processing failed: {e}")
+        send_log_to_controlroom("user-deletion-consumer", "CRITICAL", "MSG_PROCESS_FAILED", str(e))  # <-- NIEUW
         channel.basic_nack(method.delivery_tag, requeue=False)
         # 'tells' RabbitMQ that the message processing failed
         # requeue=False -> the message is not requeued, but discarded or sent to a dead-letter queue
@@ -157,6 +160,7 @@ def start_consumer():
         logger.info("Consumer stopped.")
     except Exception as e:
         logger.error(f"Consumer failed: {e}")
+        send_log_to_controlroom("user-deletion-consumer", "CRITICAL", "CONSUMER_FAILED", str(e))  # <-- NIEUW
         raise
  
 if __name__ == "__main__":
