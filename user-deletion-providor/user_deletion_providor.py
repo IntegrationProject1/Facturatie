@@ -16,13 +16,20 @@ logger = logging.getLogger(__name__)
 
 # Database connection
 def get_db_connection():
-    return mysql.connector.connect(
-        host=os.environ["DB_HOST"],
-        user=os.environ["DB_USER"],
-        password=os.environ["DB_PASSWORD"],
-        database=os.environ["DB_NAME"]
-    )
-
+    retries = 10
+    while retries > 0:
+        try:
+            return mysql.connector.connect(
+                host=os.environ["DB_HOST"],
+                user=os.environ["DB_USER"],
+                password=os.environ["DB_PASSWORD"],
+                database=os.environ["DB_NAME"]
+            )
+        except mysql.connector.Error as err:
+            print(f"MySQL not ready yet... retrying in 3s ({retries} left)")
+            retries -= 1
+            time.sleep(3)
+    raise Exception("Failed to connect to MySQL after retries")
 # Haal alle users die nog niet verwerkt zijn (processed = 0)
 def get_users_to_delete():
     conn = get_db_connection()
