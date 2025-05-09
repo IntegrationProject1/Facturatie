@@ -35,7 +35,7 @@ def send_log(service_name, status, code, message):
 
         # Declareer log exchange (fanout)
         exchange_name = os.environ.get("RABBITMQ_LOG_EXCHANGE", "log_monitoring")
-        channel.exchange_declare(exchange=exchange_name, exchange_type="fanout", durable=True)
+        channel.exchange_declare(exchange=exchange_name, exchange_type="direct", durable=True)
 
         # Publiceer bericht
         channel.basic_publish(
