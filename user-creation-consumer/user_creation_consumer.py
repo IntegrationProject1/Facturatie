@@ -3,13 +3,13 @@ import os
 import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
-from logger_utils import send_log
+from logger.rabbitmq_logger import send_log  # aangepaste logger
 
 # Logging instellen
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-SERVICE_NAME = "user-creation-consumer"
+SERVICE_NAME = "USER_CREATION_CONSUMER"
 
 # Check of gebruiker al bestaat via UUID (= timestamp)
 def user_exists(uuid_timestamp):
@@ -24,8 +24,9 @@ def user_exists(uuid_timestamp):
         cursor.execute("SELECT id FROM client WHERE timestamp = %s", (uuid_timestamp,))
         return cursor.fetchone() is not None
     except Exception as e:
-        logger.error(f"Database check mislukt: {e}")
-        send_log(SERVICE_NAME, "ERROR", "DB001", f"Database check mislukt: {e}")
+        msg = f"Databasecontrole mislukt: {e}"
+        logger.error(msg)
+        send_log(SERVICE_NAME, "ERROR", "DB_CHECK_FAILED", msg)
         raise
     finally:
         cursor.close()
@@ -54,8 +55,9 @@ def parse_user_xml(xml_data):
             'invoice_address': business.findtext('FacturationAddress', default='') if business is not None else ''
         }
     except Exception as e:
-        logger.error(f"XML parsing failed: {e}")
-        send_log(SERVICE_NAME, "ERROR", "XML001", f"XML parsing failed: {e}")
+        msg = f"XML parsing mislukt: {e}"
+        logger.error(msg)
+        send_log(SERVICE_NAME, "ERROR", "XML_PARSE_FAILED", msg)
         raise
 
 # Gebruiker toevoegen aan DB
@@ -63,7 +65,7 @@ def create_user(data):
     if user_exists(data['uuid']):
         msg = f"User met timestamp {data['uuid']} bestaat al."
         logger.warning(msg)
-        send_log(SERVICE_NAME, "WARNING", "USR001", msg)
+        send_log(SERVICE_NAME, "WARNING", "USER_EXISTS", msg)
         return False
 
     try:
@@ -97,11 +99,12 @@ def create_user(data):
         conn.commit()
         msg = f"Gebruiker aangemaakt: {data['email']} ({data['uuid']})"
         logger.info(msg)
-        send_log(SERVICE_NAME, "INFO", "USR200", msg)
+        send_log(SERVICE_NAME, "INFO", "USER_CREATED", msg)
         return True
     except Exception as e:
-        logger.error(f"Gebruiker aanmaken mislukt: {e}")
-        send_log(SERVICE_NAME, "CRITICAL", "USR500", f"Gebruiker aanmaken mislukt: {e}")
+        msg = f"Gebruiker aanmaken mislukt: {e}"
+        logger.error(msg)
+        send_log(SERVICE_NAME, "ERROR", "CREATE_FAIL", msg)
         conn.rollback()
         raise
     finally:
@@ -117,7 +120,7 @@ def on_message(channel, method, properties, body):
         if user_data['action_type'].upper() != 'CREATE':
             msg = f"Ignoreren: niet-‘CREATE’ actie: {user_data['action_type']}"
             logger.warning(msg)
-            send_log(SERVICE_NAME, "WARNING", "MSG001", msg)
+            send_log(SERVICE_NAME, "WARNING", "INVALID_ACTION", msg)
             channel.basic_ack(method.delivery_tag)
             return
 
@@ -133,7 +136,7 @@ def on_message(channel, method, properties, body):
     except Exception as e:
         msg = f"Fout tijdens verwerking: {e}"
         logger.error(msg)
-        send_log(SERVICE_NAME, "CRITICAL", "CONSUMER001", msg)
+        send_log(SERVICE_NAME, "ERROR", "PROCESSING_FAILED", msg)
         channel.basic_nack(method.delivery_tag, requeue=False)
 
 # Consumer starten
@@ -149,27 +152,31 @@ def start_consumer():
         ))
         channel = connection.channel()
 
-        queues = ['facturatie_user_create']
-        for queue in queues:
-            channel.queue_declare(queue=queue, durable=True)
-            channel.basic_consume(
-                queue=queue,
-                on_message_callback=on_message,
-                auto_ack=False
-            )
+        queue_name = 'facturatie_user_create'
+        channel.queue_declare(queue=queue_name, durable=True)
+        channel.basic_consume(
+            queue=queue_name,
+            on_message_callback=on_message,
+            auto_ack=False
+        )
 
         logger.info("Wachten op gebruikerscreatieberichten...")
-        send_log(SERVICE_NAME, "INFO", "STARTUP", "Consumer succesvol gestart.")
+        send_log(SERVICE_NAME, "INFO", "STARTUP", "Consumer gestart en klaar om berichten te ontvangen.")
         channel.start_consuming()
 
     except KeyboardInterrupt:
-        msg = "Consumer gestopt door gebruiker."
+        msg = "Consumer stoppen door gebruiker."
         logger.info(msg)
         send_log(SERVICE_NAME, "INFO", "SHUTDOWN", msg)
+        try:
+            channel.stop_consuming()
+            connection.close()
+        except:
+            pass
     except Exception as e:
-        msg = f"Consumer start mislukt: {e}"
+        msg = f"Consumer crashte: {e}"
         logger.critical(msg)
-        send_log(SERVICE_NAME, "CRITICAL", "STARTFAIL", msg)
+        send_log(SERVICE_NAME, "CRITICAL", "CONSUMER_CRASH", msg)
         raise
 
 if __name__ == "__main__":
