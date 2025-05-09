@@ -3,31 +3,23 @@ import os
 import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
-from logger.rabbitmq_logger import send_log  # aangepaste logger
 
 # Logging instellen
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-SERVICE_NAME = "USER_CREATION_CONSUMER"
-
 # Check of gebruiker al bestaat via UUID (= timestamp)
 def user_exists(uuid_timestamp):
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+    cursor = conn.cursor()
     try:
-        conn = mysql.connector.connect(
-            host=os.getenv("DB_HOST"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_NAME")
-        )
-        cursor = conn.cursor()
         cursor.execute("SELECT id FROM client WHERE timestamp = %s", (uuid_timestamp,))
         return cursor.fetchone() is not None
-    except Exception as e:
-        msg = f"Databasecontrole mislukt: {e}"
-        logger.error(msg)
-        send_log(SERVICE_NAME, "ERROR", "DB_CHECK_FAILED", msg)
-        raise
     finally:
         cursor.close()
         conn.close()
@@ -55,17 +47,13 @@ def parse_user_xml(xml_data):
             'invoice_address': business.findtext('FacturationAddress', default='') if business is not None else ''
         }
     except Exception as e:
-        msg = f"XML parsing mislukt: {e}"
-        logger.error(msg)
-        send_log(SERVICE_NAME, "ERROR", "XML_PARSE_FAILED", msg)
+        logger.error(f"XML parsing failed: {e}")
         raise
 
 # Gebruiker toevoegen aan DB
 def create_user(data):
     if user_exists(data['uuid']):
-        msg = f"User met timestamp {data['uuid']} bestaat al."
-        logger.warning(msg)
-        send_log(SERVICE_NAME, "WARNING", "USER_EXISTS", msg)
+        logger.warning(f"User met timestamp {data['uuid']} bestaat al.")
         return False
 
     try:
@@ -97,14 +85,10 @@ def create_user(data):
         )
         cursor.execute(sql, values)
         conn.commit()
-        msg = f"Gebruiker aangemaakt: {data['email']} ({data['uuid']})"
-        logger.info(msg)
-        send_log(SERVICE_NAME, "INFO", "USER_CREATED", msg)
+        logger.info(f"Gebruiker aangemaakt: {data['email']} ({data['uuid']})")
         return True
     except Exception as e:
-        msg = f"Gebruiker aanmaken mislukt: {e}"
-        logger.error(msg)
-        send_log(SERVICE_NAME, "ERROR", "CREATE_FAIL", msg)
+        logger.error(f"Gebruiker aanmaken mislukt: {e}")
         conn.rollback()
         raise
     finally:
@@ -118,9 +102,7 @@ def on_message(channel, method, properties, body):
         user_data = parse_user_xml(body.decode())
 
         if user_data['action_type'].upper() != 'CREATE':
-            msg = f"Ignoreren: niet-‘CREATE’ actie: {user_data['action_type']}"
-            logger.warning(msg)
-            send_log(SERVICE_NAME, "WARNING", "INVALID_ACTION", msg)
+            logger.warning(f"Ignoreren: niet-‘CREATE’ actie: {user_data['action_type']}")
             channel.basic_ack(method.delivery_tag)
             return
 
@@ -134,49 +116,40 @@ def on_message(channel, method, properties, body):
         channel.basic_ack(method.delivery_tag)
 
     except Exception as e:
-        msg = f"Fout tijdens verwerking: {e}"
-        logger.error(msg)
-        send_log(SERVICE_NAME, "ERROR", "PROCESSING_FAILED", msg)
+        logger.error(f"Fout tijdens verwerking: {e}")
         channel.basic_nack(method.delivery_tag, requeue=False)
 
 # Consumer starten
 def start_consumer():
-    try:
-        connection = pika.BlockingConnection(pika.ConnectionParameters(
-            host=os.getenv("RABBITMQ_HOST"),
-            port=int(os.getenv("RABBITMQ_PORT")),
-            credentials=pika.PlainCredentials(
-                os.getenv("RABBITMQ_USER"),
-                os.getenv("RABBITMQ_PASSWORD")
-            )
-        ))
-        channel = connection.channel()
-
-        queue_name = 'facturatie_user_create'
-        channel.queue_declare(queue=queue_name, durable=True)
-        channel.basic_consume(
-            queue=queue_name,
-            on_message_callback=on_message,
-            auto_ack=False
+    connection = pika.BlockingConnection(pika.ConnectionParameters(
+        host=os.getenv("RABBITMQ_HOST"),
+        port=int(os.getenv("RABBITMQ_PORT")),
+        credentials=pika.PlainCredentials(
+            os.getenv("RABBITMQ_USER"),
+            os.getenv("RABBITMQ_PASSWORD")
         )
+    ))
+    channel = connection.channel()
+
+    try:
+        queues = ['facturatie_user_create']
+        for queue in queues:
+            channel.queue_declare(queue=queue, durable=True)
+            channel.basic_consume(
+                queue=queue,
+                on_message_callback=on_message,
+                auto_ack=False
+            )
 
         logger.info("Wachten op gebruikerscreatieberichten...")
-        send_log(SERVICE_NAME, "INFO", "STARTUP", "Consumer gestart en klaar om berichten te ontvangen.")
         channel.start_consuming()
 
     except KeyboardInterrupt:
-        msg = "Consumer stoppen door gebruiker."
-        logger.info(msg)
-        send_log(SERVICE_NAME, "INFO", "SHUTDOWN", msg)
-        try:
-            channel.stop_consuming()
-            connection.close()
-        except:
-            pass
+        logger.info("Consumer stoppen...")
+        channel.stop_consuming()
+        connection.close()
     except Exception as e:
-        msg = f"Consumer crashte: {e}"
-        logger.critical(msg)
-        send_log(SERVICE_NAME, "CRITICAL", "CONSUMER_CRASH", msg)
+        logger.error(f"Consumer mislukt: {e}")
         raise
 
 if __name__ == "__main__":
