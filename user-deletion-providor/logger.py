@@ -40,7 +40,7 @@ def send_log(service_name, status, code, message):
         # Publiceer bericht
         channel.basic_publish(
             exchange=exchange_name,
-            routing_key="",
+            routing_key="logs.events",
             body=xml_string,
             properties=pika.BasicProperties(delivery_mode=2)
         )
