@@ -20,11 +20,18 @@ def process_order(xml_data, xsd_path):
         print(f"Error processing order: {e}")
 
 def callback(ch, method, properties, body):
-    xsd_path = "C:/Users/ebenh/Downloads/Facturatie/invoice-processor/order.xsd"
+    xsd_path = "invoice-processor/order.xsd"
     process_order(body.decode(), xsd_path)
 
 def main():
-    connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+    connection = pika.BlockingConnection(pika.ConnectionParameters(
+        host=os.getenv("RABBITMQ_HOST"),
+        port=int(os.getenv("RABBITMQ_PORT")),
+        credentials=pika.PlainCredentials(
+            os.getenv("RABBITMQ_USER"),
+            os.getenv("RABBITMQ_PASSWORD")
+        ) 
+    ))
     channel = connection.channel()
     channel.queue_declare(queue='order_queue')
     channel.basic_consume(queue='order_queue', on_message_callback=callback, auto_ack=True)
