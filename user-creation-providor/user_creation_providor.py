@@ -67,9 +67,9 @@ def mark_as_processed(client_id):
     # Insert user into processed_users table
     try:
         cursor.execute("""
-            INSERT INTO processed_users (client_id, processed_at)
+            INSERT INTO processed_users (timestamp, processed_at)
             VALUES (%s, NOW())
-        """, (client_id,))
+        """, (timestamp,))
         conn.commit()
     except mysql.connector.Error as err:
         logger.error(f"Failed to mark user {client_id} as processed: {err}")
