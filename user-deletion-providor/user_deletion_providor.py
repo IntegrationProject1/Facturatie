@@ -6,20 +6,12 @@ import mysql.connector
 import time
 import logging
 
-# For logging and debugging
+# Logging setup
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Disable pika logging
-pika_logger = logging.getLogger("pika")
-pika_logger.handlers.clear()  # Removes any existing handlers
-pika_logger.propagate = False
-pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
-
-open('logfile.log', 'w').close()  # Clear previous log file
 
 # Database connection
 def get_db_connection():
@@ -30,58 +22,65 @@ def get_db_connection():
         database=os.environ["DB_NAME"]
     )
 
-# Get pending deletions from database that have not been processed yet
-def get_pending_deletions():
-
+# Haal alle users die nog niet verwerkt zijn (processed = 0)
+def get_users_to_delete():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    
-    # Fetch pending deletions with basic email format validation
+
     try:
         cursor.execute("""
-            SELECT client_id, email, deleted_at 
-            FROM user_deletions_queue
-            WHERE processed = FALSE
-            AND email IS NOT NULL
-            AND email LIKE '_%@_%._%'  -- Basic email format validation
-            ORDER BY deleted_at
-            LIMIT 50
+            SELECT 
+                client_id, 
+                deleted_at
+            FROM user_deletion_notifications
+            WHERE processed = 0
+            ORDER BY deleted_at ASC
         """)
-        return cursor.fetchall()
+        users = cursor.fetchall()
+
+        for user in users:
+            deleted_at = user['deleted_at']
+            if isinstance(deleted_at, str):
+                deleted_at = datetime.strptime(deleted_at, '%Y-%m-%d %H:%M:%S.%f')
+            user['timestamp'] = deleted_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+
+        return users
+    except mysql.connector.Error as err:
+        logger.error(f"Database error: {err}")
+        return []
     finally:
         cursor.close()
         conn.close()
 
-# Mark user deletion as processed
-def mark_as_processed(client_id):
-
-    # Establish connection
+# Zet processed = 1 zodat hij niet opnieuw verzonden wordt
+def mark_as_deleted(client_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     try:
         cursor.execute("""
-            UPDATE user_deletions_queue
-            SET processed = TRUE
+            UPDATE user_deletion_notifications
+            SET processed = 1
             WHERE client_id = %s
         """, (client_id,))
         conn.commit()
-    except mysql.connector.Error as err:    #error handling + logging
-        logger.error(f"Failed to mark deletion processed for user {client_id}: {err}")
-    finally:           #closing cursor and connection
+    except mysql.connector.Error as err:
+        logger.error(f"Failed to mark client {client_id} as processed: {err}")
+    finally:
         cursor.close()
         conn.close()
 
-# Create XML message for RabbitMQ from user data
-def create_deletion_xml(email):
-
+# Maak een geldig XML-bestand volgens het XSD-formaat (DELETE)
+def create_delete_xml(user):
     xml = ET.Element("UserMessage")
-    ET.SubElement(xml, "ActionType").text = "DELETE"
-    ET.SubElement(xml, "Email").text = email
-    ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
-    return '<?xml version="1.0"?>\n' + ET.tostring(xml, encoding='unicode')
 
-# Send XML message to multiple RabbitMQ queues
+    ET.SubElement(xml, "ActionType").text = "DELETE"
+    ET.SubElement(xml, "UUID").text = user['timestamp']
+    ET.SubElement(xml, "TimeOfAction").text = datetime.utcnow().isoformat() + "Z"
+
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(xml, encoding='unicode')
+
+# Verstuur XML naar RabbitMQ queues
 def send_to_rabbitmq(xml):
     queues = ["crm_user_delete", "kassa_user_delete", "frontend_user_delete"]
 
@@ -97,18 +96,32 @@ def send_to_rabbitmq(xml):
             heartbeat=600,
             blocked_connection_timeout=300
         )
-        
+
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
 
+        channel.exchange_declare(
+            exchange="user",
+            exchange_type="topic",
+            durable=True
+        )
+
         for queue in queues:
             channel.queue_declare(queue=queue, durable=True)
+            channel.queue_bind(
+                exchange="user",
+                queue=queue,
+                routing_key=f"user.delete.{queue}"
+            )
             channel.basic_publish(
                 exchange="user",
                 routing_key=f"user.delete.{queue}",
-                body=xml
+                body=xml,
+                properties=pika.BasicProperties(
+                    delivery_mode=2
+                )
             )
-            logger.info(f"Sent XML message to {queue}")
+            logger.info(f"Sent DELETE XML message to {queue}")
 
         connection.close()
         return True
@@ -116,58 +129,46 @@ def send_to_rabbitmq(xml):
         logger.error(f"RabbitMQ Error: {e}")
         return False
 
-# Initialize database for safety and to avoid errors
+# Optioneel: initialiseer tabel als die nog niet bestaat
 def initialize_database():
-
-    # Establish connection
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     try:
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_deletions_queue (
+            CREATE TABLE IF NOT EXISTS user_deletion_notifications (
                 id INT AUTO_INCREMENT PRIMARY KEY,
-                client_id INT NOT NULL UNIQUE,
-                deleted_at DATETIME NOT NULL,
-                processed BOOLEAN DEFAULT FALSE
+                client_id INT NOT NULL,
+                deleted_at DATETIME(6) NOT NULL,
+                timestamp DATETIME(6),
+                processed BOOLEAN DEFAULT 0
             )
         """)
         conn.commit()
-    except Exception as e:  #error handling + logging
+    except Exception as e:
         logger.error(f"Database initialization failed: {e}")
-    finally:       #closing cursor and connection
+    finally:
         cursor.close()
         conn.close()
 
 # Main loop
-# Get pending deletions every 5 seconds, create XML message and send to RabbitMQ
 if __name__ == "__main__":
     initialize_database()
-    logger.info("Starting user deletion providor")  #logging
-    
+    logger.info("Starting user deletion provider")
+
     while True:
         try:
-            deletions = get_pending_deletions()
-            
-            for deletion in deletions:
-                try:
-                    # Skip if email is invalid (already filtered in get_pending_deletions)
-                    if not deletion['email']:
-                        mark_as_processed(deletion['client_id'])
-                        continue
-                        
-                    xml = create_deletion_xml(deletion['email'])  # Use pre-queried email
-                    if xml and send_to_rabbitmq(xml):
-                        mark_as_processed(deletion['client_id'])
-                        logger.info(f"Processed deletion for {deletion['email']} (ID: {deletion['client_id']})")
-                    else:
-                        logger.error(f"Failed to send deletion for {deletion['email']}")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to process {deletion['client_id']}: {e}")
-                    mark_as_processed(deletion['client_id'])  # Prevent infinite retry
-            
-            time.sleep(5)   # every 5 seconds the loop will run again to check for pending deletions
-        except Exception as e: #error handling + logging
+            users_to_delete = get_users_to_delete()
+
+            for user in users_to_delete:
+                xml = create_delete_xml(user)
+                if send_to_rabbitmq(xml):
+                    mark_as_deleted(user['client_id'])
+                    logger.info(f"Processed deletion for client {user['client_id']} with timestamp {user['timestamp']}")
+                else:
+                    logger.error(f"Failed to process deletion for client {user['client_id']}")
+
+            time.sleep(5)
+        except Exception as e:
             logger.error(f"Processing error: {e}")
-            time.sleep(60)  # if there is an error, the loop will wait for 60 seconds before running again
+            time.sleep(60)

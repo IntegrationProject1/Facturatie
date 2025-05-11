@@ -3,231 +3,195 @@ import os
 import logging
 import xml.etree.ElementTree as ET
 import mysql.connector
-import time
 from datetime import datetime
 
-# For logging and debugging
+# Configure logging with debug level
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Changed to DEBUG for more detailed logging
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Disable pika logging
-pika_logger = logging.getLogger("pika")
-pika_logger.handlers.clear()  # Removes any existing handlers
-pika_logger.propagate = False
-pika_logger.setLevel(logging.WARNING)  # Only show warnings and errors
-
-open('logfile.log', 'w').close()  # Clear previous log file
-
-# Establish a connection to the MySQL database
+# Database connection helper function
 def get_db_connection():
+    return mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
 
+# Check if user exists and return current data if they do
+def get_current_user_data(uuid_timestamp):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
     try:
-        return mysql.connector.connect(
-            host=os.getenv("DB_HOST"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_NAME")
-        )
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        raise
-
-# Fetch current user data from the database
-def get_current_user_data(timestamp):
-
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        
+        logger.debug(f"Checking for existing user with timestamp: {uuid_timestamp}")
         cursor.execute("""
-            SELECT first_name, last_name, phone, company, company_vat, 
-                   address_1, city, postcode 
+            SELECT 
+                id, email, pass, first_name, last_name, 
+                phone, company, address_1 as address, company_vat as vat
             FROM client 
             WHERE timestamp = %s
-        """, (timestamp,))
+        """, (uuid_timestamp,))
+        user = cursor.fetchone()
         
-        result = cursor.fetchone()
-        if not result:
-            raise ValueError(f"No user found with timestamp: {timestamp}")
-            
-        return result
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch current user data: {e}")
-        raise
+        if user:
+            logger.debug(f"Found existing user: {user}")
+            return user
+        logger.warning(f"No user found with timestamp: {uuid_timestamp}")
+        return None
     finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
+        cursor.close()
+        conn.close()
 
-# Update user details in the database
-def update_user(user_data):
-
-    conn = None
-    cursor = None
-    try:
-        # Get current data for fields not being updated
-        current_data = get_current_user_data(user_data['timestamp'])
-        
-        # Prepare update fields - only update what's provided in the XML
-        update_fields = {
-            'first_name': user_data.get('first_name') or current_data['first_name'],
-            'last_name': user_data.get('last_name') or current_data['last_name'],
-            'phone': user_data.get('phone') or current_data['phone'],
-            'company': user_data.get('business_name') or current_data['company'],
-            'company_vat': user_data.get('vat_number') or current_data['company_vat'],
-            'address_1': user_data.get('address') or current_data['address_1'],
-            'city': extract_city(user_data.get('address')) if user_data.get('address') else current_data['city'],
-            'postcode': extract_postcode(user_data.get('address')) if user_data.get('address') else current_data['postcode'],
-            'email': user_data['email']
-        }
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        update_query = """
-        UPDATE client SET
-            first_name = %s,
-            last_name = %s,
-            phone = %s,
-            company = %s,
-            company_vat = %s,
-            address_1 = %s,
-            city = %s,
-            postcode = %s,
-            updated_at = NOW()
-        WHERE timestamp = %s
-        """
-        
-        cursor.execute(update_query, (
-            update_fields['first_name'],
-            update_fields['last_name'],
-            update_fields['phone'],
-            update_fields['company'],
-            update_fields['company_vat'],
-            update_fields['address_1'],
-            update_fields['city'],
-            update_fields['postcode'],
-            update_fields['email']
-        ))
-        
-        conn.commit()
-        logger.info(f"Updated client: {user_data['email']}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Client update failed: {e}")
-        if conn:
-            conn.rollback()
-        raise
-    finally:
-        if cursor:
-            cursor.close()
-        if conn and conn.is_connected():
-            conn.close()
-
-# Extract the city from the address string
-def extract_city(address):
-
-    if not address:
-        return ''
-    parts = address.split(',')
-    if len(parts) >= 3:
-        return parts[-2].strip()
-    return ''
-
-# Extract the postcode from the address string
-def extract_postcode(address):
-
-    if not address:
-        return ''
-    parts = address.split(',')
-    if len(parts) >= 3:
-        return parts[-1].strip().split(' ')[0]
-    return ''
-
-# Parse XML data to extract user information
+# XML parser (similar to creation but handles UPDATE action type)
 def parse_user_xml(xml_data):
-
     try:
+        logger.debug("Parsing XML data")
         root = ET.fromstring(xml_data)
+        
+        # Validate action type
+        action_type = root.find('ActionType').text.upper()
+        if action_type != 'UPDATE':
+            raise ValueError(f"Invalid action type for update consumer: {action_type}")
+
         business = root.find('Business')
         
-        # Only include fields that are present in the XML
-        user_data = {
-            'action_type': root.find('ActionType').text,
-            'email': root.find('EmailAddress').text
+        # Parse all possible fields (most are optional)
+        parsed_data = {
+            'action_type': action_type,
+            'uuid': root.find('UUID').text,
+            'timestamp': root.find('TimeOfAction').text,
+            'password': root.findtext('EncryptedPassword'),  # Optional for updates
+            'first_name': root.findtext('FirstName'),
+            'last_name': root.findtext('LastName'),
+            'phone': root.findtext('PhoneNumber'),
+            'email': root.findtext('EmailAddress'),
+            'company': business.findtext('BusinessName') if business is not None else None,
+            'company_email': business.findtext('BusinessEmail') if business is not None else None,
+            'address': business.findtext('RealAddress') if business is not None else None,
+            'vat': business.findtext('BTWNumber') if business is not None else None,
+            'invoice_address': business.findtext('FacturationAddress') if business is not None else None
         }
         
-        # Optional fields
-        if root.find('FirstName') is not None:
-            user_data['first_name'] = root.find('FirstName').text
-        if root.find('LastName') is not None:
-            user_data['last_name'] = root.find('LastName').text
-        if root.find('PhoneNumber') is not None:
-            user_data['phone'] = root.find('PhoneNumber').text
-            
-        if business is not None:
-            if business.find('BusinessName') is not None:
-                user_data['business_name'] = business.find('BusinessName').text
-            if business.find('BTWNumber') is not None:
-                user_data['vat_number'] = business.find('BTWNumber').text
-            if business.find('RealAddress') is not None:
-                user_data['address'] = business.find('RealAddress').text
-        
-        return user_data
+        logger.debug(f"Parsed XML data: {parsed_data}")
+        return parsed_data
     except Exception as e:
         logger.error(f"XML parsing failed: {e}")
         raise
 
-# Handle incoming RabbitMQ messages
-def on_message(channel, method, properties, body):
+# Update user in database
+def update_user(data):
+    # First get current user data
+    current_data = get_current_user_data(data['uuid'])
+    if not current_data:
+        logger.error(f"Cannot update - user with timestamp {data['uuid']} does not exist")
+        return False
 
+    # Prepare update fields - only include fields that are provided in the XML
+    update_fields = {}
+    
+    # Basic fields
+    if data['password'] is not None:
+        update_fields['pass'] = data['password']
+    if data['first_name'] is not None:
+        update_fields['first_name'] = data['first_name']
+    if data['last_name'] is not None:
+        update_fields['last_name'] = data['last_name']
+    if data['phone'] is not None:
+        update_fields['phone'] = data['phone']
+    if data['email'] is not None:
+        update_fields['email'] = data['email']
+    
+    # Business fields
+    if data['company'] is not None:
+        update_fields['company'] = data['company']
+    if data['address'] is not None:
+        update_fields['address_1'] = data['address']
+    if data['vat'] is not None:
+        update_fields['company_vat'] = data['vat']
+    
+    # If no fields to update, log and return
+    if not update_fields:
+        logger.info("No fields to update - all fields in XML were empty")
+        return True
+    
+    # Build the dynamic SQL update query
+    set_clause = ", ".join([f"{field} = %s" for field in update_fields.keys()])
+    values = list(update_fields.values())
+    values.append(data['uuid'])  # For WHERE clause
+    
     try:
-        logger.info(f"Received update message from {method.routing_key}")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        sql = f"""
+            UPDATE client 
+            SET {set_clause}, updated_at = NOW()
+            WHERE timestamp = %s
+        """
+        
+        logger.debug(f"Executing update query: {sql}")
+        logger.debug(f"With values: {values}")
+        
+        cursor.execute(sql, values)
+        conn.commit()
+        
+        logger.info(f"Successfully updated user with timestamp: {data['uuid']}")
+        return True
+    except Exception as e:
+        logger.error(f"User update failed: {e}")
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+def on_message(channel, method, properties, body):
+    try:
+        logger.info(f"Received message via {method.routing_key}")
+        logger.debug(f"Message body: {body.decode()}")
         
         user_data = parse_user_xml(body.decode())
-        
-        if user_data['action_type'].upper() != 'UPDATE':
+
+        # Check action type
+        if user_data['action_type'] != 'UPDATE':
             logger.warning(f"Ignoring non-UPDATE action: {user_data['action_type']}")
             channel.basic_ack(method.delivery_tag)
             return
-            
+
+        # Format UUID/timestamp (same as creation consumer)
+        if user_data['uuid'].endswith('Z'):
+            user_data['uuid'] = user_data['uuid'][:-1]
+        if 'T' in user_data['uuid']:
+            user_data['uuid'] = user_data['uuid'].replace('T', ' ')
+        
         update_user(user_data)
         channel.basic_ack(method.delivery_tag)
         
     except Exception as e:
-        logger.error(f"Message processing failed: {e}")
+        logger.error(f"Error processing message: {e}")
         channel.basic_nack(method.delivery_tag, requeue=False)
 
-# Start the RabbitMQ consumer to listen for update messages
+# Start the consumer
 def start_consumer():
-
     connection = pika.BlockingConnection(pika.ConnectionParameters(
         host=os.getenv("RABBITMQ_HOST"),
         port=int(os.getenv("RABBITMQ_PORT")),
         credentials=pika.PlainCredentials(
             os.getenv("RABBITMQ_USER"),
             os.getenv("RABBITMQ_PASSWORD")
-        )
+        ),
+        heartbeat=600,
+        blocked_connection_timeout=300
     ))
     channel = connection.channel()
-    
+
     try:
-        # Explicitly declare queue before consuming
+        # Declare the update queue
         queue_name = 'facturatie_user_update'
         channel.queue_declare(queue=queue_name, durable=True)
-
-        # Add a short delay before consuming
-        logger.info("Waiting 2 seconds before consuming to ensure queue is ready...")
-        time.sleep(2)
-
         channel.basic_consume(
             queue=queue_name,
             on_message_callback=on_message,
@@ -236,16 +200,15 @@ def start_consumer():
 
         logger.info("Waiting for user update messages...")
         channel.start_consuming()
-        
+
     except KeyboardInterrupt:
         logger.info("Stopping consumer...")
         channel.stop_consuming()
         connection.close()
-        logger.info("Consumer stopped.")
     except Exception as e:
         logger.error(f"Consumer failed: {e}")
         raise
 
-# Main entry point to start the consumer
 if __name__ == "__main__":
+    logger.info("Starting update consumer...")
     start_consumer()
