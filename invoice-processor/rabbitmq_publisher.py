@@ -18,12 +18,12 @@ def send_to_mailing_queue(invoice):
         channel = connection.channel()
         
         # Declare the exchange
-        channel.exchange_declare(exchange='billing', exchange_type='topic', durable=True)
+        channel.queue_declare(queue="mail_queue", durable=True)
         
         # Publish the message
         channel.basic_publish(
-            exchange='billing',
-            routing_key='order.created',
+            exchange='',
+            routing_key='mail_queue',
             body=json.dumps(invoice),
             properties=pika.BasicProperties(
                 delivery_mode=2  # Make message persistent

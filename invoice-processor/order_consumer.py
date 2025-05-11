@@ -3,6 +3,7 @@ import os
 from order_processor import validate_and_parse_xml, extract_order_data
 from invoice_creator import create_invoice
 from rabbitmq_publisher import send_to_mailing_queue
+from dotenv import load_dotenv
 
 def process_order(xml_data, xsd_path):
     try:
@@ -33,8 +34,8 @@ def main():
         ) 
     ))
     channel = connection.channel()
-    channel.queue_declare(queue='order_queue')
-    channel.basic_consume(queue='order_queue', on_message_callback=callback, auto_ack=True)
+    channel.queue_declare(queue='order.created', durable=True)
+    channel.basic_consume(queue='order.created', on_message_callback=callback, auto_ack=True)
     print("Waiting for messages...")
     channel.start_consuming()
 
