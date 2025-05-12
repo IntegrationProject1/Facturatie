@@ -4,6 +4,7 @@ from order_processor import validate_and_parse_xml, extract_order_data
 from invoice_creator import create_invoice
 from rabbitmq_publisher import send_to_mailing_queue
 from dotenv import load_dotenv
+load_dotenv()
 
 def process_order(xml_data, xsd_path):
     try:
@@ -21,7 +22,7 @@ def process_order(xml_data, xsd_path):
         print(f"Error processing order: {e}")
 
 def callback(ch, method, properties, body):
-    xsd_path = "invoice-processor/order.xsd"
+    xsd_path = "order.xsd"
     process_order(body.decode(), xsd_path)
 
 def main():
