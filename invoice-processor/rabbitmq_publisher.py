@@ -24,7 +24,7 @@ def send_to_mailing_queue(invoice):
         channel.basic_publish(
             exchange='',
             routing_key='mail_queue',
-            body=json.dumps(invoice),
+            body=json.dumps(invoice, default=str),
             properties=pika.BasicProperties(
                 delivery_mode=2  # Make message persistent
             )
