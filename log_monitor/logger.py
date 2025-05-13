@@ -32,7 +32,6 @@ def publish_log(xml_message):
         channel.queue_bind(exchange=EXCHANGE_NAME, queue="controlroom.log.event", routing_key=ROUTING_KEY)
         channel.basic_publish(exchange=EXCHANGE_NAME, routing_key=ROUTING_KEY, body=xml_message)
         connection.close()
-        print("Log verzonden naar RabbitMQ")
     except Exception as e:
         print("Fout bij verzenden naar RabbitMQ:", e)
 
