@@ -19,7 +19,7 @@ def get_db_connection():
         host=os.environ["DB_HOST"],
         user=os.environ["DB_USER"],
         password=os.environ["DB_PASSWORD"],
-        database=os.environ["DB_NAME"]
+        database=os.environ["DB_NAME"],
     )
 
 def get_new_users():
