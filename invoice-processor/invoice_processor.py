@@ -170,15 +170,19 @@ def process_order(order_xml):
         # Retrieve client
         client = get_client_by_uuid(order_data['uuid'])
         if not client:
-            raise ValueError(f"Client not found for UUID: {order_data['uuid']}")
+            logger.error(f"No client found with UUID: {order_data['uuid']}")
+            # Skip processing this order
+            return
 
         # Create invoice
         invoice_hash = create_invoice(order_data, client['id'])
         if not invoice_hash:
-            raise ValueError("Failed to create invoice")
+            logger.error(f"Failed to create invoice for UUID: {order_data['uuid']}")
+            return
 
         # Publish email message
         publish_email_message(invoice_hash, client, order_data)
+        logger.info(f"Successfully processed order for UUID: {order_data['uuid']}")
     except Exception as e:
         logger.error(f"Failed to process order: {e}")
 
