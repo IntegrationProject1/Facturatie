@@ -235,6 +235,8 @@ def initialize_database():
 if __name__ == "__main__":
     initialize_database()
     logger.info("Starting user deletion provider")
+    send_log_to_controlroom("SYSTEM", datetime.utcnow().isoformat(), status="INFO", message="User deletion provider started")
+
 
     while True:
         try:
@@ -258,4 +260,5 @@ if __name__ == "__main__":
             time.sleep(5)
         except Exception as e:
             logger.error(f"Processing error: {e}")
+            send_log_to_controlroom("SYSTEM", datetime.utcnow().isoformat(), status="ERROR", message=f"User deletion provider crashed: {e}")
             time.sleep(60)
