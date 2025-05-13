@@ -41,8 +41,6 @@ services:
       - "30082:80"
     environment:
       PMA_HOST: db
-      PMA_USER: ${DB_USER}
-      PMA_PASSWORD: ${DB_PASSWORD}
     networks:
       - facturatie_network
 
