@@ -41,6 +41,8 @@ services:
       - "30082:80"
     environment:
       PMA_HOST: db
+      PMA_USER: ${DB_USER}
+      PMA_PASSWORD: ${DB_PASSWORD}
     networks:
       - facturatie_network
 
@@ -103,17 +105,6 @@ services:
   user-update-consumer:
     build: ./user-update-consumer
     container_name: facturatie_update_consumer
-    restart: unless-stopped
-    env_file: .env
-    depends_on:
-      - db
-    networks:
-      - facturatie_network
-
-#Inovice processor Service
-  invoice-processor:
-    build: ./invoice-processor
-    container_name: facturatie_invoice_processor
     restart: unless-stopped
     env_file: .env
     depends_on:
