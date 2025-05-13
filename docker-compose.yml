@@ -10,6 +10,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - db_data:/var/lib/mysql
+      - /data/facturatie/mysql:/var/lib/mysql:rw
     networks:
       - facturatie_network
 
@@ -28,6 +29,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
     volumes:
       - app_data:/var/www/html
+      - /data/facturatie/app:/var/www/html:rw
     networks:
       - facturatie_network
 
@@ -103,17 +105,6 @@ services:
   user-update-consumer:
     build: ./user-update-consumer
     container_name: facturatie_update_consumer
-    restart: unless-stopped
-    env_file: .env
-    depends_on:
-      - db
-    networks:
-      - facturatie_network
-
-# invoice-processor service toevoegen
-  invoice-processor:
-    build: ./invoice-processor
-    container_name: facturatie_invoice_processor
     restart: unless-stopped
     env_file: .env
     depends_on:
