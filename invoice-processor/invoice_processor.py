@@ -1,303 +1,213 @@
-# invoice-processor/invoice_processor.py
 import pika
 import os
-import logging
 import xml.etree.ElementTree as ET
-import mysql.connector
 from datetime import datetime
+import mysql.connector
+import time
+import logging
+import hashlib
 
-# Logging configureren
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# For logging and debugging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-class InvoiceProcessor:
-    def __init__(self):
-        self.rabbitmq_host = os.getenv("RABBITMQ_HOST")
-        self.rabbitmq_port = int(os.getenv("RABBITMQ_PORT"))
-        self.rabbitmq_user = os.getenv("RABBITMQ_USER")
-        self.rabbitmq_pass = os.getenv("RABBITMQ_PASSWORD")
-        
-        self.db_config = {
-            'host': os.getenv("DB_HOST"),
-            'user': os.getenv("DB_USER"),
-            'password': os.getenv("DB_PASSWORD"),
-            'database': os.getenv("DB_NAME")
+# Database connection
+def get_db_connection():
+    return mysql.connector.connect(
+        host=os.environ["DB_HOST"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASSWORD"],
+        database=os.environ["DB_NAME"]
+    )
+
+# Parse XML message
+def parse_order_xml(order_xml):
+    try:
+        root = ET.fromstring(order_xml)
+
+        # Extract order data
+        order_data = {
+            'date': root.find('Date').text,
+            'uuid': root.find('UUID').text,
+            'products': [
+                {
+                    'product_nr': float(product.find('ProductNR').text),
+                    'quantity': float(product.find('Quantity').text),
+                    'unit_price': float(product.find('UnitPrice').text)
+                }
+                for product in root.find('Products').findall('Product')
+            ]
         }
+        return order_data
+    except Exception as e:
+        logger.error(f"Failed to parse order XML: {e}")
+        raise
 
-    def get_client_by_uuid(self, uuid_timestamp):
-        """Haal clientgegevens op basis van UUID (timestamp)"""
-        try:
-            conn = mysql.connector.connect(**self.db_config)
-            cursor = conn.cursor(dictionary=True)
-            
-            query = """
-                SELECT id, first_name, last_name, email 
-                FROM client 
-                WHERE timestamp = %s
-            """
-            cursor.execute(query, (uuid_timestamp,))
-            result = cursor.fetchone()
-            
-            if not result:
-                logger.error(f"Geen client gevonden met timestamp: {uuid_timestamp}")
-                return None
-                
-            return result
-        except Exception as e:
-            logger.error(f"Databasefout bij ophalen client: {e}")
-            raise
-        finally:
-            cursor.close()
-            conn.close()
+# Retrieve client by UUID
+def get_client_by_uuid(uuid):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT id, first_name, last_name, email 
+            FROM client 
+            WHERE timestamp = %s
+        """, (uuid,))
+        client = cursor.fetchone()
+        if not client:
+            logger.error(f"No client found with UUID: {uuid}")
+        return client
+    except mysql.connector.Error as err:
+        logger.error(f"Database error while retrieving client: {err}")
+        return None
+    finally:
+        cursor.close()
+        conn.close()
 
-    def create_fossbilling_invoice(self, order_data, client_id):
-        """Maak een factuur aan in FossBilling"""
-        try:
-            conn = mysql.connector.connect(**self.db_config)
-            cursor = conn.cursor(dictionary=True)
+# Create invoice in FossBilling
+def create_invoice(order_data, client_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Calculate totals
+        subtotal = sum(
+            product['quantity'] * product['unit_price'] 
+            for product in order_data['products']
+        )
+        tax = subtotal * 0.21  # 21% VAT
+        total = subtotal + tax
 
-            # Bereken totaal
-            subtotal = sum(
-                float(product['Quantity']) * float(product['UnitPrice']) 
-                for product in order_data['Products']
-            )
-            tax_amount = subtotal * 0.21  # 21% BTW
-            total = subtotal + tax_amount
+        # Generate unique hash
+        hash_input = f"{client_id}-{datetime.utcnow().isoformat()}"
+        invoice_hash = hashlib.sha256(hash_input.encode()).hexdigest()
 
-            # Genereer unieke hash (gewoon dummy SHA256 voor nu)
-            import hashlib, time
-            hash_input = f"{client_id}-{time.time()}"
-            invoice_hash = hashlib.sha256(hash_input.encode()).hexdigest()
+        # Insert invoice into database
+        cursor.execute("""
+            INSERT INTO invoice (
+                client_id, serie, nr, hash, currency, subtotal, tax, total, 
+                created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+        """, (
+            client_id, 'FOSS', 1, invoice_hash, 'EUR', subtotal, tax, total
+        ))
+        invoice_id = cursor.lastrowid
 
-            invoice_query = """
-                INSERT INTO invoice (
-                    client_id, serie, nr, hash, currency, currency_rate, credit, 
-                    base_income, base_refund, refund, notes, text_1, text_2, status,
-                    seller_company, seller_company_vat, seller_company_number, seller_address, 
-                    seller_phone, seller_email,
-                    buyer_first_name, buyer_last_name, buyer_email,
-                    approved, taxname, taxrate, 
-                    subtotal, total, tax,
-                    due_at, created_at, updated_at
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, 
-                    %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s,
-                    DATE_ADD(NOW(), INTERVAL 30 DAY), NOW(), NOW()
-                )
-            """
-
-            invoice_values = (
-                client_id,
-                'FOSS',                     # serie
-                10,                         # nr — hardcoded als voorbeeld
-                invoice_hash,
-                'EUR',                      # currency
-                None,                       # currency_rate
-                None,                       # credit
-                subtotal,                  # base_income
-                None,                      # base_refund
-                None,                      # refund
-                None,                      # notes
-                None, None,                # text_1, text_2
-                'unpaid',                  # status
-                'E-XPO',                   # seller_company
-                'BE4598792446749',         # seller_company_vat
-                'E-XPO',                   # seller_company_number
-                'Nijverheidskaai 170 Anderlecht 1070 België',  # seller_address
-                '+32 465 49 44 79',        # seller_phone
-                'info@e-xpo.com',          # seller_email
-                'Luna',                    # buyer_first_name — dummy
-                '',                        # buyer_last_name
-                'luna.dheere@student.ehb.be',  # buyer_email
-                1,                         # approved (True)
-                'BTW',                     # taxname
-                21,                        # taxrate
-                subtotal,
-                total,
-                tax_amount
-            )
-
-            cursor.execute(invoice_query, invoice_values)
-            invoice_id = cursor.lastrowid
-
-            # Producten toevoegen
-            for product in order_data['Products']:
-                item_query = """
-                    INSERT INTO invoice_item (
-                        invoice_id, 
-                        type, 
-                        title, 
-                        quantity, 
-                        unit_price, 
-                        price, 
-                        taxed,
-                        created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
-                """
-                item_values = (
-                    invoice_id, 
-                    'product', 
-                    f"Product {product['ProductNR']}", 
-                    float(product['Quantity']), 
-                    float(product['UnitPrice']), 
-                    float(product['Quantity']) * float(product['UnitPrice']), 
-                    1
-                )
-                cursor.execute(item_query, item_values)
-
-            conn.commit()
-            logger.info(f"Factuur aangemaakt met ID: {invoice_id}")
-            return invoice_id
-        except Exception as e:
-            logger.error(f"Fout bij aanmaken factuur: {e}")
-            if 'conn' in locals():
-                conn.rollback()
-            raise
-        finally:
-            if 'cursor' in locals():
-                cursor.close()
-            if 'conn' in locals():
-                conn.close()
-
-
-    def prepare_email_message(self, invoice_id, client_data, order_data):
-        """Bereid het emailbericht voor"""
-        email_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<emailMessage service="facturatie">
-    <to>{client_data['email']}</to>
-    <from>expo-facturatie@gmail.com</from>
-    <subject>Uw factuur #{invoice_id}</subject>
-    <title>Factuur #{invoice_id}</title>
-    <opener></opener>
-    <body>
-        Beste {client_data['first_name']} {client_data['last_name']},
-        
-        Hierbij ontvangt u de factuur voor uw recente bestelling.
-        
-        Factuurnummer: {invoice_id}
-        Datum: {order_data['Date']}
-        
-        Met vriendelijke groeten,
-        Het Facturatie Team
-    </body>
-    <footer>
-        © {datetime.now().year} E-XPO
-    </footer>
-</emailMessage>
-        """
-        return email_xml
-
-    def publish_email_message(self, email_xml):
-        """Publiceer het emailbericht naar de mail_queue"""
-        try:
-            connection = pika.BlockingConnection(pika.ConnectionParameters(
-                host=self.rabbitmq_host,
-                port=self.rabbitmq_port,
-                credentials=pika.PlainCredentials(
-                    self.rabbitmq_user,
-                    self.rabbitmq_pass
-                )
+        # Insert products into invoice_item table
+        for product in order_data['products']:
+            cursor.execute("""
+                INSERT INTO invoice_item (
+                    invoice_id, type, title, quantity, unit_price, price, taxed, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+            """, (
+                invoice_id, 'product', f"Product {product['product_nr']}",
+                product['quantity'], product['unit_price'],
+                product['quantity'] * product['unit_price'], 1
             ))
-            channel = connection.channel()
-            
-            channel.queue_declare(queue='mail_queue', durable=True)
-            channel.basic_publish(
-                exchange='',
-                routing_key='mail_queue',
-                body=email_xml,
-                properties=pika.BasicProperties(
-                    delivery_mode=2,  # make message persistent
-                )
-            )
-            
-            logger.info("Emailbericht gepubliceerd naar mail_queue")
-            connection.close()
-        except Exception as e:
-            logger.error(f"Fout bij publiceren naar RabbitMQ: {e}")
-            raise
 
-    def process_order(self, order_xml):
-        """Verwerk de order en genereer factuur en email"""
-        try:
-            # Parse XML
-            root = ET.fromstring(order_xml)
-            
-            order_data = {
-                'Date': root.find('Date').text,
-                'UUID': root.find('UUID').text,
-                'Products': [
-                    {
-                        'ProductNR': product.find('ProductNR').text,
-                        'Quantity': product.find('Quantity').text,
-                        'UnitPrice': product.find('UnitPrice').text
-                    }
-                    for product in root.find('Products').findall('Product')
-                ]
-            }
-            
-            # Haal clientgegevens op
-            client_data = self.get_client_by_uuid(order_data['UUID'])
-            if not client_data:
-                raise ValueError(f"Client niet gevonden met UUID: {order_data['UUID']}")
-            
-            # Maak factuur aan
-            invoice_id = self.create_fossbilling_invoice(order_data, client_data['id'])
-            
-            # Bereid email voor
-            email_xml = self.prepare_email_message(invoice_id, client_data, order_data)
-            
-            # Publiceer email
-            self.publish_email_message(email_xml)
-            
-            return True
-        except Exception as e:
-            logger.error(f"Fout bij verwerken order: {e}")
-            raise
+        conn.commit()
+        logger.info(f"Invoice created with ID: {invoice_id}")
+        return invoice_hash
+    except mysql.connector.Error as err:
+        logger.error(f"Failed to create invoice: {err}")
+        conn.rollback()
+        return None
+    finally:
+        cursor.close()
+        conn.close()
 
-    def start_consuming(self):
-        """Start de RabbitMQ consumer"""
-        try:
-            connection = pika.BlockingConnection(pika.ConnectionParameters(
-                host=self.rabbitmq_host,
-                port=self.rabbitmq_port,
-                credentials=pika.PlainCredentials(
-                    self.rabbitmq_user,
-                    self.rabbitmq_pass
-                )
-            ))
-            channel = connection.channel()
-            
-            channel.queue_declare(queue='order.created', durable=True)
-            channel.basic_consume(
-                queue='order.created',
-                on_message_callback=self.on_message,
-                auto_ack=False
-            )
-            
-            logger.info("Wachten op orders op queue 'order.created'...")
-            channel.start_consuming()
-        except KeyboardInterrupt:
-            logger.info("Consumer gestopt")
-            connection.close()
-        except Exception as e:
-            logger.error(f"Consumer fout: {e}")
-            raise
+# Publish email message to RabbitMQ
+def publish_email_message(invoice_hash, client, order_data):
+    try:
+        params = pika.ConnectionParameters(
+            host=os.environ["RABBITMQ_HOST"],
+            port=int(os.environ["RABBITMQ_PORT"]),
+            virtual_host="/",
+            credentials=pika.PlainCredentials(
+                os.environ["RABBITMQ_USER"],
+                os.environ["RABBITMQ_PASSWORD"]
+            ),
+            heartbeat=600,
+            blocked_connection_timeout=300
+        )
+        connection = pika.BlockingConnection(params)
+        channel = connection.channel()
 
-    def on_message(self, channel, method, properties, body):
-        """Callback voor binnenkomende berichten"""
-        try:
-            logger.info(f"Order ontvangen via {method.routing_key}")
-            self.process_order(body.decode())
-            channel.basic_ack(method.delivery_tag)
-        except Exception as e:
-            logger.error(f"Fout bij verwerken bericht: {e}")
-            channel.basic_nack(method.delivery_tag, requeue=False)
+        # Declare exchange
+        channel.exchange_declare(exchange="invoice", exchange_type="topic", durable=True)
 
+        # Create email XML
+        email_xml = ET.Element("EmailMessage")
+        ET.SubElement(email_xml, "To").text = client['email']
+        ET.SubElement(email_xml, "Subject").text = "Your Invoice"
+        ET.SubElement(email_xml, "Body").text = (
+            f"Dear {client['first_name']} {client['last_name']},\n\n"
+            f"Thank you for your order. You can download your invoice here:\n"
+            f"http://integrationproject-2425s2-001.westeurope.cloudapp.azure.com:30081/invoice/pdf/{invoice_hash}\n\n"
+            f"Best regards,\nE-XPO Team"
+        )
+
+        # Publish message
+        channel.basic_publish(
+            exchange="invoice",
+            routing_key="invoice.email",
+            body=ET.tostring(email_xml, encoding="unicode"),
+            properties=pika.BasicProperties(delivery_mode=2)  # Persistent message
+        )
+        logger.info(f"Email message published for invoice hash: {invoice_hash}")
+        connection.close()
+    except Exception as e:
+        logger.error(f"Failed to publish email message: {e}")
+
+# Process order
+def process_order(order_xml):
+    try:
+        # Parse order XML
+        order_data = parse_order_xml(order_xml)
+
+        # Retrieve client
+        client = get_client_by_uuid(order_data['uuid'])
+        if not client:
+            raise ValueError(f"Client not found for UUID: {order_data['uuid']}")
+
+        # Create invoice
+        invoice_hash = create_invoice(order_data, client['id'])
+        if not invoice_hash:
+            raise ValueError("Failed to create invoice")
+
+        # Publish email message
+        publish_email_message(invoice_hash, client, order_data)
+    except Exception as e:
+        logger.error(f"Failed to process order: {e}")
+
+# Main loop
 if __name__ == "__main__":
-    processor = InvoiceProcessor()
-    processor.start_consuming()
+    logger.info("Starting invoice processor")
+    while True:
+        try:
+            # Simulate receiving an order XML (replace with RabbitMQ consumer logic)
+            order_xml = """
+            <Order>
+                <Date>2025-05-13T12:00:00Z</Date>
+                <UUID>2025-05-13T12:00:00Z</UUID>
+                <Products>
+                    <Product>
+                        <ProductNR>1</ProductNR>
+                        <Quantity>2</Quantity>
+                        <UnitPrice>50.00</UnitPrice>
+                    </Product>
+                    <Product>
+                        <ProductNR>2</ProductNR>
+                        <Quantity>1</Quantity>
+                        <UnitPrice>100.00</UnitPrice>
+                    </Product>
+                </Products>
+            </Order>
+            """
+            process_order(order_xml)
+            time.sleep(5)
+        except Exception as e:
+            logger.error(f"Error in main loop: {e}")
+            time.sleep(60)
