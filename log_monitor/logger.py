@@ -1,58 +1,57 @@
-import subprocess
+import docker
 import pika
-import time
 import xml.etree.ElementTree as ET
+import time
+import os
 
-# RabbitMQ Config
-RABBITMQ_HOST = "integrationproject-2425s2-001.westeurope.cloudapp.azure.com"
-RABBITMQ_PORT = 30020
-RABBITMQ_USER = "ehbstudent"
-RABBITMQ_PASSWORD = "wpqjf9mI3DKZdZDaa!"
-ROUTING_KEY = "controlroom.log.event"
-EXCHANGE = "log_monitoring"
 SERVICE_NAME = "Facturatie"
+EXCHANGE_NAME = "log_monitoring"
+ROUTING_KEY = "controlroom.log.event"
 
-def send_log_to_rabbitmq(status, message):
-    root = ET.Element("Log")
-    ET.SubElement(root, "ServiceName").text = SERVICE_NAME
-    ET.SubElement(root, "Status").text = status
-    ET.SubElement(root, "Message").text = message
-    xml_data = ET.tostring(root, encoding='utf-8')
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST")
+RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
+RABBITMQ_USER = os.getenv("RABBITMQ_USER")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD")
 
+def create_xml_log(status, message):
+    log = ET.Element("Log")
+    ET.SubElement(log, "ServiceName").text = SERVICE_NAME
+    ET.SubElement(log, "Status").text = status
+    ET.SubElement(log, "Message").text = message
+    return ET.tostring(log, encoding='utf-8', method='xml')
+
+def publish_log(xml_message):
     credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-    parameters = pika.ConnectionParameters(host=RABBITMQ_HOST, port=RABBITMQ_PORT, credentials=credentials)
-    connection = pika.BlockingConnection(parameters)
+    params = pika.ConnectionParameters(RABBITMQ_HOST, RABBITMQ_PORT, '/', credentials)
+    connection = pika.BlockingConnection(params)
     channel = connection.channel()
-    channel.exchange_declare(exchange=EXCHANGE, exchange_type='direct', durable=True)
-    channel.basic_publish(exchange=EXCHANGE, routing_key=ROUTING_KEY, body=xml_data)
+    channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='direct', durable=True)
+    channel.basic_publish(exchange=EXCHANGE_NAME, routing_key=ROUTING_KEY, body=xml_message)
     connection.close()
 
-def get_logs_from_container(name):
-    try:
-        logs = subprocess.check_output(["docker", "logs", "--tail", "5", name], stderr=subprocess.STDOUT)
-        return logs.decode("utf-8")
-    except subprocess.CalledProcessError as e:
-        return f"[ERROR] Kan logs niet ophalen van {name}: {e.output.decode('utf-8')}"
+def monitor_logs():
+    client = docker.from_env()
+    containers = client.containers.list()
 
-def main():
-    containers = [
-        "facturatie_user_providor",
-        "facturatie_update_providor",
-        "facturatie_deletion_providor",
-        "facturatie_creation_consumer",
-        "facturatie_update_consumer",
-        "facturatie_deletion_consumer",
-        "facturatie_heartbeat"
-    ]
-    logs_sent = {}
-
-    while True:
-        for name in containers:
-            logs = get_logs_from_container(name)
-            if logs and logs != logs_sent.get(name):
-                send_log_to_rabbitmq("INFO", f"[{name}] {logs.strip()}")
-                logs_sent[name] = logs
-        time.sleep(10)
+    for container in containers:
+        for line in container.logs(stream=True, follow=True, tail=0):
+            log_line = line.decode('utf-8').strip()
+            status = "INFO"
+            if "error" in log_line.lower():
+                status = "ERROR"
+            elif "warn" in log_line.lower():
+                status = "WARNING"
+            xml_message = create_xml_log(status, f"{container.name}: {log_line}")
+            publish_log(xml_message)
 
 if __name__ == "__main__":
-    main()
+    while True:
+        try:
+            monitor_logs()
+        except Exception as e:
+            error_log = create_xml_log("CRITICAL", f"Logger crashed: {str(e)}")
+            try:
+                publish_log(error_log)
+            except:
+                pass
+            time.sleep(5)
