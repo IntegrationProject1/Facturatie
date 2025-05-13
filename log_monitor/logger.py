@@ -27,6 +27,8 @@ def publish_log(xml_message):
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
         channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='direct', durable=True)
+        channel.queue_declare(queue="controlroom.log.event", durable=True)
+        channel.queue_bind(exchange=EXCHANGE_NAME, queue="controlroom.log.event", routing_key=ROUTING_KEY)
         channel.basic_publish(exchange=EXCHANGE_NAME, routing_key=ROUTING_KEY, body=xml_message)
         connection.close()
         print("Log verzonden naar RabbitMQ")
@@ -58,7 +60,8 @@ def monitor_logs():
 
 if __name__ == "__main__":
     print("Logger wordt gestart...")
-    print("Verbinden met RabbitMQ op", RABBITMQ_HOST + ":", RABBITMQ_PORT, "als", RABBITMQ_USER)
+    print("Verbinden met RabbitMQ op", RABBITMQ_HOST, ":", RABBITMQ_PORT, "als", RABBITMQ_USER)
+    
     try:
         test_msg = create_xml_log("INFO", "Test startbericht van log-monitor")
         publish_log(test_msg)
