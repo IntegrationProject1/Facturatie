@@ -110,6 +110,17 @@ services:
     networks:
       - facturatie_network
 
+# invoice-processor service toevoegen
+  invoice-processor:
+    build: ./invoice-processor
+    container_name: facturatie_invoice_processor
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
 # RabbitMQ log-monitor Service
   log-monitor:
     build: ./log_monitor
