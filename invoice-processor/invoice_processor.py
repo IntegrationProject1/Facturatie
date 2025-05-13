@@ -56,11 +56,6 @@ class InvoiceProcessor:
             conn = mysql.connector.connect(**self.db_config)
             cursor = conn.cursor(dictionary=True)
             
-            # Get the last invoice ID to generate incremental number
-            cursor.execute("SELECT id FROM invoice ORDER BY id DESC LIMIT 1")
-            last_invoice = cursor.fetchone()
-            next_invoice_number = (last_invoice['id'] + 1) if last_invoice else 1
-            
             # Bereken totaal
             subtotal = sum(
                 float(product['Quantity']) * float(product['UnitPrice']) 
@@ -69,23 +64,25 @@ class InvoiceProcessor:
             tax_amount = subtotal * 0.21  # 21% BTW
             total = subtotal + tax_amount
             
-            # Factuur aanmaken met correcte kolomnamen
+            # Factuur aanmaken met minimale vereiste velden
             invoice_query = """
                 INSERT INTO invoice (
-                    client_id, status, paid_at, created_at, updated_at, 
-                    taxname, taxrate, id, discount, 
-                    subtotal, total, currency, currency_rate, 
-                    due_at, seller_notes, terms, notes
-                ) VALUES (%s, %s, NULL, NOW(), NOW(), 
-                        %s, %s, %s, %s, 
-                        %s, %s, %s, %s, 
-                        DATE_ADD(NOW(), INTERVAL 30 DAY), %s, %s, %s)
+                    client_id, 
+                    status, 
+                    created_at, 
+                    updated_at,
+                    subtotal,
+                    total,
+                    tax,
+                    due_at
+                ) VALUES (%s, %s, NOW(), NOW(), %s, %s, %s, DATE_ADD(NOW(), INTERVAL 30 DAY))
             """
             invoice_values = (
-                client_id, 'unpaid',
-                'BTW', 21.00, next_invoice_number, 0.00,
-                subtotal, total, 'EUR', 1.00,
-                '', '', 'Factuur gegenereerd vanuit order'
+                client_id, 
+                'unpaid',
+                subtotal,
+                total,
+                tax_amount
             )
             cursor.execute(invoice_query, invoice_values)
             invoice_id = cursor.lastrowid
@@ -94,22 +91,29 @@ class InvoiceProcessor:
             for product in order_data['Products']:
                 item_query = """
                     INSERT INTO invoice_item (
-                        invoice_id, type, title, description, 
-                        quantity, unit_price, price, taxed, 
-                        created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                        invoice_id, 
+                        type, 
+                        title, 
+                        quantity, 
+                        unit_price, 
+                        price, 
+                        taxed,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
                 """
                 item_values = (
-                    invoice_id, 'product', f"Product {product['ProductNR']}", 
-                    f"Productnummer: {product['ProductNR']}", 
-                    float(product['Quantity']), float(product['UnitPrice']), 
+                    invoice_id, 
+                    'product', 
+                    f"Product {product['ProductNR']}", 
+                    float(product['Quantity']), 
+                    float(product['UnitPrice']), 
                     float(product['Quantity']) * float(product['UnitPrice']), 
                     1
                 )
                 cursor.execute(item_query, item_values)
             
             conn.commit()
-            logger.info(f"Factuur aangemaakt met ID: {invoice_id}, Nummer: {next_invoice_number}")
+            logger.info(f"Factuur aangemaakt met ID: {invoice_id}")
             return invoice_id
         except Exception as e:
             logger.error(f"Fout bij aanmaken factuur: {e}")
@@ -121,11 +125,6 @@ class InvoiceProcessor:
                 cursor.close()
             if 'conn' in locals():
                 conn.close()
-
-    def generate_invoice_number(self):
-        """Genereer een uniek factuurnummer"""
-        now = datetime.now()
-        return f"INV-{now.year}{now.month:02d}{now.day:02d}-{now.hour:02d}{now.minute:02d}{now.second:02d}"
 
     def prepare_email_message(self, invoice_id, client_data, order_data):
         """Bereid het emailbericht voor"""
