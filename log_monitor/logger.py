@@ -1,58 +1,82 @@
-import subprocess
+import docker
 import pika
-import time
 import xml.etree.ElementTree as ET
+import time
+import os
 
-# RabbitMQ Config
-RABBITMQ_HOST = "integrationproject-2425s2-001.westeurope.cloudapp.azure.com"
-RABBITMQ_PORT = 30020
-RABBITMQ_USER = "ehbstudent"
-RABBITMQ_PASSWORD = "wpqjf9mI3DKZdZDaa!"
-ROUTING_KEY = "controlroom.log.event"
-EXCHANGE = "log_monitoring"
 SERVICE_NAME = "Facturatie"
+EXCHANGE_NAME = "log_monitoring"
+ROUTING_KEY = "controlroom.log.event"
 
-def send_log_to_rabbitmq(status, message):
-    root = ET.Element("Log")
-    ET.SubElement(root, "ServiceName").text = SERVICE_NAME
-    ET.SubElement(root, "Status").text = status
-    ET.SubElement(root, "Message").text = message
-    xml_data = ET.tostring(root, encoding='utf-8')
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST")
+RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
+RABBITMQ_USER = os.getenv("RABBITMQ_USER")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD")
 
-    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-    parameters = pika.ConnectionParameters(host=RABBITMQ_HOST, port=RABBITMQ_PORT, credentials=credentials)
-    connection = pika.BlockingConnection(parameters)
-    channel = connection.channel()
-    channel.exchange_declare(exchange=EXCHANGE, exchange_type='direct', durable=True)
-    channel.basic_publish(exchange=EXCHANGE, routing_key=ROUTING_KEY, body=xml_data)
-    connection.close()
+def create_xml_log(status, message):
+    log = ET.Element("Log")
+    ET.SubElement(log, "ServiceName").text = SERVICE_NAME
+    ET.SubElement(log, "Status").text = status
+    ET.SubElement(log, "Message").text = message
+    return ET.tostring(log, encoding='utf-8', method='xml')
 
-def get_logs_from_container(name):
+def publish_log(xml_message):
     try:
-        logs = subprocess.check_output(["docker", "logs", "--tail", "5", name], stderr=subprocess.STDOUT)
-        return logs.decode("utf-8")
-    except subprocess.CalledProcessError as e:
-        return f"[ERROR] Kan logs niet ophalen van {name}: {e.output.decode('utf-8')}"
+        credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
+        params = pika.ConnectionParameters(RABBITMQ_HOST, RABBITMQ_PORT, '/', credentials)
+        connection = pika.BlockingConnection(params)
+        channel = connection.channel()
+        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='direct', durable=True)
+        channel.queue_declare(queue="controlroom.log.event", durable=True)
+        channel.queue_bind(exchange=EXCHANGE_NAME, queue="controlroom.log.event", routing_key=ROUTING_KEY)
+        channel.basic_publish(exchange=EXCHANGE_NAME, routing_key=ROUTING_KEY, body=xml_message)
+        connection.close()
+        print("Log verzonden naar RabbitMQ")
+    except Exception as e:
+        print("Fout bij verzenden naar RabbitMQ:", e)
 
-def main():
-    containers = [
-        "facturatie_user_providor",
-        "facturatie_update_providor",
-        "facturatie_deletion_providor",
-        "facturatie_creation_consumer",
-        "facturatie_update_consumer",
-        "facturatie_deletion_consumer",
-        "facturatie_heartbeat"
-    ]
-    logs_sent = {}
+def monitor_logs():
+    print("Start met log monitoring...")
+    client = docker.from_env()
+    containers = client.containers.list()
 
-    while True:
-        for name in containers:
-            logs = get_logs_from_container(name)
-            if logs and logs != logs_sent.get(name):
-                send_log_to_rabbitmq("INFO", f"[{name}] {logs.strip()}")
-                logs_sent[name] = logs
-        time.sleep(10)
+    for container in containers:
+        print("Container gevonden:", container.name)
+        try:
+            for line in container.logs(stream=True, follow=True, tail=10):
+                log_line = line.decode('utf-8').strip()
+                print("Log uit", container.name + ":", log_line)
+
+                status = "INFO"
+                if "error" in log_line.lower():
+                    status = "ERROR"
+                elif "warn" in log_line.lower():
+                    status = "WARNING"
+
+                xml_message = create_xml_log(status, f"{container.name}: {log_line}")
+                publish_log(xml_message)
+        except Exception as e:
+            print("Fout bij lezen van logs voor", container.name + ":", e)
 
 if __name__ == "__main__":
-    main()
+    print("Logger wordt gestart...")
+    print("Verbinden met RabbitMQ op", RABBITMQ_HOST, ":", RABBITMQ_PORT, "als", RABBITMQ_USER)
+    
+    try:
+        test_msg = create_xml_log("INFO", "Test startbericht van log-monitor")
+        publish_log(test_msg)
+        print("Testbericht succesvol verzonden\n")
+    except Exception as e:
+        print("Kan geen verbinding maken met RabbitMQ:", e, "\n")
+
+    while True:
+        try:
+            monitor_logs()
+        except Exception as e:
+            error_log = create_xml_log("CRITICAL", f"Logger crashed: {str(e)}")
+            print("Logger crashed:", e)
+            try:
+                publish_log(error_log)
+            except Exception as pub_error:
+                print("Fout bij verzenden van crash-log:", pub_error)
+            time.sleep(5)
