@@ -40,6 +40,9 @@ def monitor_logs():
     client = docker.from_env()
     containers = client.containers.list()
 
+    error_keywords = ["error", "err", "fatal", "critical", "exception"]
+    warning_keywords = ["warn", "warning", "deprecated"]
+
     for container in containers:
         print("Container gevonden:", container.name)
         try:
@@ -48,10 +51,12 @@ def monitor_logs():
                 print("Log uit", container.name + ":", log_line)
 
                 status = "INFO"
-                if "error" in log_line.lower():
+                if any(word in log_line.lower() for word in error_keywords):
                     status = "ERROR"
-                elif "warn" in log_line.lower():
+                elif any(word in log_line.lower() for word in warning_keywords):
                     status = "WARNING"
+
+                print(f"→ Status bepaald: {status} | Bericht: {log_line}")  # DEBUG PRINT
 
                 xml_message = create_xml_log(status, f"{container.name}: {log_line}")
                 publish_log(xml_message)
@@ -61,11 +66,14 @@ def monitor_logs():
 if __name__ == "__main__":
     print("Logger wordt gestart...")
     print("Verbinden met RabbitMQ op", RABBITMQ_HOST, ":", RABBITMQ_PORT, "als", RABBITMQ_USER)
-    
+
     try:
+        # Testlogs bij opstart
         test_msg = create_xml_log("INFO", "Test startbericht van log-monitor")
         publish_log(test_msg)
-        print("Testbericht succesvol verzonden\n")
+        publish_log(create_xml_log("ERROR", "Test ERROR log van logger"))
+        publish_log(create_xml_log("WARNING", "Test WARNING log van logger"))
+        print("Testberichten succesvol verzonden\n")
     except Exception as e:
         print("Kan geen verbinding maken met RabbitMQ:", e, "\n")
 
