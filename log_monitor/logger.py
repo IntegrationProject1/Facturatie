@@ -46,7 +46,7 @@ def monitor_logs():
     for container in containers:
         print("Container gevonden:", container.name)
         try:
-            for line in container.logs(stream=True, follow=True, tail=10):
+            for line in container.logs(stream=True, follow=True):
                 log_line = line.decode('utf-8').strip()
                 print("Log uit", container.name + ":", log_line)
 
