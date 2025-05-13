@@ -110,6 +110,17 @@ services:
     networks:
       - facturatie_network
 
+# RabbitMQ log-monitor Service
+  log-monitor:
+    build: ./log_monitor
+    container_name: facturatie_log_monitor
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - facturatie_network
+
 # Heartbeat Service to CRM
   heartbeat:
     build: ./heartbeat
