@@ -38,7 +38,20 @@ def publish_log(xml_message):
 def monitor_logs():
     print("Start met log monitoring...")
     client = docker.from_env()
-    containers = client.containers.list()
+    whitelist = [
+        "facturatie_user_providor",
+        "facturatie_update_providor",
+        "facturatie_deletion_providor",
+        "facturatie_creation_consumer",
+        "facturatie_update_consumer",
+        "facturatie_deletion_consumer",
+        "facturatie_invoice_processor",
+        "facturatie_app",
+        "facturatie_log_monitor",
+        "facturatie_heartbeat"
+    ]
+    containers = [c for c in client.containers.list() if c.name in whitelist]
+
 
     error_keywords = ["error", "err", "fatal", "critical", "exception"]
     warning_keywords = ["warn", "warning", "deprecated"]
