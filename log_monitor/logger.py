@@ -72,8 +72,7 @@ def monitor_logs():
         "facturatie_invoice_processor",
         "facturatie_app",
         "facturatie_log_monitor",
-        "facturatie_heartbeat"
-    ]
+                ]
     containers = [c for c in client.containers.list() if c.name in whitelist]
 
     for container in containers:
