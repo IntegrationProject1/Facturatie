@@ -17,7 +17,6 @@ def get_db_connection():
         user=os.environ["DB_USER"],
         password=os.environ["DB_PASSWORD"],
         database=os.environ["DB_NAME"],
-        port = os.environ["DB_PORT"]
     )
 
 def get_invoices():
