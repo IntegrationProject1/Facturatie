@@ -66,15 +66,15 @@ def mark_as_processed(invoice_hash):
         conn.close()
 
 def create_xml_message(client_email, invoice_hash):
-    host = os.getenv("DB_HOST")
-    port = os.getenv("DB_PORT")
+    host = os.environ["DB_HOST"]
+    port = os.environ["DB_PORT"]
 
     invoice_pdf_url = f"http://{host}:{port}/invoice/pdf/{invoice_hash}"
 
     xml = ET.Element("emailMessage")
 
 
-    # Create the email body elements
+    
     ET.SubElement(xml, "to").text = client_email
     ET.SubElement(xml, "from").text = "no-reply@E-XPO.com"
     ET.SubElement(xml, "subject").text = f"Invoice E-XPO"
@@ -104,13 +104,13 @@ def send_to_rabbitmq(xml):
 
         channel.exchange_declare(
             exchange="user",
-            exchange_type="topic",  # Changed from 'direct' to 'topic'
+            exchange_type="topic",
             durable=True
         )
 
         for queue in queues:
             channel.queue_declare(queue=queue, durable=True)
-            # Ensure the routing pattern matches topic exchange expectations
+            
             channel.queue_bind(
                 exchange="invoice",
                 queue=queue,
@@ -121,7 +121,7 @@ def send_to_rabbitmq(xml):
                 routing_key=f"invoice.{queue}",
                 body=xml,
                 properties=pika.BasicProperties(
-                    delivery_mode=2  # Make messages persistent
+                    delivery_mode=2
                 )
             )
             logger.info(f"Sent XML message to {queue}")
@@ -133,7 +133,7 @@ def send_to_rabbitmq(xml):
         return False
     
 if __name__ == "__main__":
-    logger.info("Starting user creation provider")
+    logger.info("Starting invoice mailing provider")
     
     while True:
         try:
