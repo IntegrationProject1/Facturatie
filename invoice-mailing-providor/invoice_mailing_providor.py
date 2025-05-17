@@ -140,10 +140,14 @@ if __name__ == "__main__":
             new_users = get_invoices()
             
             for user in new_users:
-                xml = create_xml_message(user)
+                xml = create_xml_message(user[0], user[1])
+                # user[0] is the email, user[1] is the hash
                 if send_to_rabbitmq(xml):
-                    mark_as_processed(user['id'])
-                    logger.info(f"Processed user {user['id']} with timestamp ID {user['timestamp']}")
+                    mark_as_processed(user[1])
+                    # not using the uuid because a user could have multiple invoices
+                    # and we don't want to send the same invoice multiple times
+
+                    logger.info(f"Processed invoice with hash {user[1]} for client {user[0]}")
                 else:
                     logger.error(f"Failed to process user {user['id']}")
             
