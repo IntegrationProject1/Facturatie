@@ -138,6 +138,29 @@ services:
     networks:
       - facturatie_network
 
+# Invoice mailing providor Service
+  invoice-mailing-providor:
+    build: ./invoice-mailing-providor
+    container_name: facturatie_invoice_providor
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
+# Invoice kassa consumer Service
+  invoice-kassa-consumer:
+    build: ./invoice-kassa-consumer
+    container_name: facturatie_kassa_consumer
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    networks:
+      - facturatie_network
+
+
 networks:
   facturatie_network:
     name: facturatie_network
