@@ -10,7 +10,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - db_data:/var/lib/mysql
-      - /data/facturatie/mysql:/var/lib/mysql:rw
+#      - /data/facturatie/mysql:/var/lib/mysql:rw
     networks:
       - facturatie_network
 
@@ -29,7 +29,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
     volumes:
       - app_data:/var/www/html
-      - /data/facturatie/app:/var/www/html:rw
+#      - /data/facturatie/app:/var/www/html:rw
     networks:
       - facturatie_network
 
