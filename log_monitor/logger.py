@@ -3,6 +3,7 @@ import pika
 import xml.etree.ElementTree as ET
 import time
 import os
+import threading
 
 SERVICE_NAME = "Facturatie"
 EXCHANGE_NAME = "log_monitoring"
@@ -13,9 +14,9 @@ RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
 RABBITMQ_USER = os.getenv("RABBITMQ_USER")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD")
 
-def create_xml_log(status, message):
+def create_xml_log(status, message, container_name=None):
     log = ET.Element("Log")
-    ET.SubElement(log, "ServiceName").text = SERVICE_NAME
+    ET.SubElement(log, "ServiceName").text = f"{SERVICE_NAME}::{container_name}" if container_name else SERVICE_NAME
     ET.SubElement(log, "Status").text = status
     ET.SubElement(log, "Message").text = message
     return ET.tostring(log, encoding='utf-8', method='xml')
@@ -31,37 +32,52 @@ def publish_log(xml_message):
         channel.queue_bind(exchange=EXCHANGE_NAME, queue="controlroom.log.event", routing_key=ROUTING_KEY)
         channel.basic_publish(exchange=EXCHANGE_NAME, routing_key=ROUTING_KEY, body=xml_message)
         connection.close()
-        print("Log verzonden naar RabbitMQ")
     except Exception as e:
         print("Fout bij verzenden naar RabbitMQ:", e)
+
+def monitor_container_logs(container):
+    error_keywords = ["error", "err", "fatal", "critical", "exception"]
+    warning_keywords = ["warn", "warning", "deprecated"]
+
+    print("Start logstream voor:", container.name)
+    try:
+        for line in container.logs(stream=True, follow=True):
+            log_line = line.decode('utf-8').strip()
+            print("Log uit", container.name + ":", log_line)
+
+            status = "INFO"
+            if any(word in log_line.lower() for word in error_keywords):
+                status = "ERROR"
+            elif any(word in log_line.lower() for word in warning_keywords):
+                status = "WARNING"
+
+            print(f"→ Status bepaald: {status} | Bericht: {log_line}")
+            xml_message = create_xml_log(status, f"{container.name}: {log_line}")
+            publish_log(xml_message)
+
+    except Exception as e:
+        print(f"Fout bij logstream {container.name}: {e}")
 
 def monitor_logs():
     print("Start met log monitoring...")
     client = docker.from_env()
-    containers = client.containers.list()
-
-    error_keywords = ["error", "err", "fatal", "critical", "exception"]
-    warning_keywords = ["warn", "warning", "deprecated"]
+    whitelist = [
+        "facturatie_user_providor",
+        "facturatie_update_providor",
+        "facturatie_deletion_providor",
+        "facturatie_creation_consumer",
+        "facturatie_update_consumer",
+        "facturatie_deletion_consumer",
+        "facturatie_invoice_processor",
+        "facturatie_app",
+        "facturatie_log_monitor",
+                ]
+    containers = [c for c in client.containers.list() if c.name in whitelist]
 
     for container in containers:
-        print("Container gevonden:", container.name)
-        try:
-            for line in container.logs(stream=True, follow=True):
-                log_line = line.decode('utf-8').strip()
-                print("Log uit", container.name + ":", log_line)
-
-                status = "INFO"
-                if any(word in log_line.lower() for word in error_keywords):
-                    status = "ERROR"
-                elif any(word in log_line.lower() for word in warning_keywords):
-                    status = "WARNING"
-
-                print(f"→ Status bepaald: {status} | Bericht: {log_line}")  # DEBUG PRINT
-
-                xml_message = create_xml_log(status, f"{container.name}: {log_line}")
-                publish_log(xml_message)
-        except Exception as e:
-            print("Fout bij lezen van logs voor", container.name + ":", e)
+        thread = threading.Thread(target=monitor_container_logs, args=(container,))
+        thread.daemon = True
+        thread.start()
 
 if __name__ == "__main__":
     print("Logger wordt gestart...")
@@ -77,9 +93,12 @@ if __name__ == "__main__":
     except Exception as e:
         print("Kan geen verbinding maken met RabbitMQ:", e, "\n")
 
+    # Start monitoring
     while True:
         try:
             monitor_logs()
+            while True:
+                time.sleep(1)  # Hou de main-thread levend
         except Exception as e:
             error_log = create_xml_log("CRITICAL", f"Logger crashed: {str(e)}")
             print("Logger crashed:", e)

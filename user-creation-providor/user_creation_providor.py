@@ -30,24 +30,28 @@ def get_new_users():
     try:
         cursor.execute("""
             SELECT 
-                c.id, c.first_name, c.last_name, c.email, c.pass, c.phone, c.created_at,
+                c.id, c.first_name, c.last_name, c.email, c.pass, c.phone, c.timestamp,
                 c.company AS business_name,
                 c.company_vat AS btw_number,
                 CONCAT_WS(', ', c.address_1, c.city, c.country) AS real_address
             FROM client c
             LEFT JOIN processed_users p ON c.id = p.client_id
             WHERE p.client_id IS NULL
-            ORDER BY c.created_at ASC
+            ORDER BY c.timestamp ASC
         """)
         users = cursor.fetchall()
         
         for user in users:
-            created_at = user['created_at']
-            if isinstance(created_at, str):
-                # Parse the string into a datetime object
-                created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
-            # Format the timestamp as ISO 8601 with microseconds
-            user['timestamp'] = created_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            # The timestamp is already in the correct format from the database
+            # So we don't need any conversion, just ensure it's properly named
+            if 'timestamp' in user and user['timestamp']:
+                if isinstance(user['timestamp'], str):
+                    # If it's a string, we might want to ensure it's in ISO format
+                    # But since it's already coming from the timestamp column, we can leave it as is
+                    pass
+                elif hasattr(user['timestamp'], 'strftime'):
+                    # If it's a datetime object, format it
+                    user['timestamp'] = user['timestamp'].strftime('%Y-%m-%dT%H:%M:%S.%fZ')
         
         return users
     except mysql.connector.Error as err:
