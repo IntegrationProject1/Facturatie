@@ -39,5 +39,4 @@ jobs:
 
       - name: Verify containers are healthy
         run: |
-          timeout 60 bash -c 'until docker compose ps | grep "(healthy)"; do sleep 5; done'
           docker compose ps

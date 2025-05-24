@@ -39,4 +39,8 @@ jobs:
           docker compose exec -T user-update-consumer pytest test_update_consumer.py || echo "Update consumer tests failed"
           docker compose exec -T user-deletion-providor pytest test_deletion_providor.py || echo "Deletion provider tests failed"
           docker compose exec -T user-deletion-consumer pytest test_deletion_consumer.py || echo "Deletion consumer tests failed"
+          docker compose exec -T heartbeat pytest test_heartbeat.py || echo "Heartbeat tests failed"
+          docker compose exec -T log_monitor pytest test_logger.py || echo "Logger tests failed"
+          docker compose exec -T invoice-kassa-consumer pytest test_invoice_kassa_consumer.py || echo "Kassa consumer tests failed"
+          docker compose exec -T invoice-mailing-providor pytest test_invoice_mailing_providor.py || echo "Invoice mailing providor tests failed"
           exit 0
