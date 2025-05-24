@@ -49,6 +49,10 @@ def get_invoices():
         logger.error(f"Error fetching invoices: {err}")
         return []
     
+    except Exception as e:
+        logging.error(f"Error fetching invoices: {e}")
+        return []
+    
     finally:
         cursor.close()
         conn.close()
@@ -73,8 +77,8 @@ def mark_as_processed(invoice_hash):
             """, (invoice_hash,))
             conn.commit()
             logger.info(f"Marked invoice {invoice_hash} as processed.")
-    except mysql.connector.Error as err:
-        logger.error(f"Error marking invoice as processed: {err}")
+    except Exception as e:
+        logging.error(f"Error marking invoice as processed: {e}")
     finally:
         cursor.close()
         conn.close()
