@@ -51,7 +51,9 @@ def monitor_container_logs(container):
             elif any(word in log_line.lower() for word in warning_keywords):
                 status = "WARNING"
 
-            print(f"→ Status bepaald: {status} | Bericht: {log_line}")
+            if log_line.strip() == "" or log_line.lower() == "info":
+                print(f"Genegeerde lege log van {container.name}")
+                continue
             xml_message = create_xml_log(status, f"{container.name}: {log_line}")
             publish_log(xml_message)
 
