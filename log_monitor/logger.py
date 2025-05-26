@@ -52,8 +52,8 @@ def monitor_container_logs(container):
                 status = "WARNING"
 
                 # Skip empty or useless logs
-            if log_line.strip() == "" or log_line.lower() == "info":
-                print(f"Ignored empty log from {container.name}")
+            if not log_line.strip() or log_line.strip().lower() in ["info", "error", "warning"]:
+                print(f"Ignored non-informative log from {container.name}: '{log_line}'")
                 continue
 
             # Skip INFO logs to reduce log spam
