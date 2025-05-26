@@ -51,9 +51,19 @@ def monitor_container_logs(container):
             elif any(word in log_line.lower() for word in warning_keywords):
                 status = "WARNING"
 
+                # Skip empty or useless logs
             if log_line.strip() == "" or log_line.lower() == "info":
-                print(f"Genegeerde lege log van {container.name}")
+                print(f"Ignored empty log from {container.name}")
                 continue
+
+            # Skip INFO logs to reduce log spam
+            if status == "INFO":
+                # If you want to enable INFO logging again, just uncomment the two lines below
+                # xml_message = create_xml_log(status, f"{container.name}: {log_line}")
+                # publish_log(xml_message)
+                print(f"Skipped INFO log from {container.name}: {log_line}")
+                continue
+
             xml_message = create_xml_log(status, f"{container.name}: {log_line}")
             publish_log(xml_message)
 
