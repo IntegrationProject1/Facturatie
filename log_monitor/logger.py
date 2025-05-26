@@ -117,7 +117,7 @@ if __name__ == "__main__":
             while True:
                 time.sleep(1)  # Hou de main-thread levend
         except Exception as e:
-            error_log = create_xml_log("CRITICAL", f"Logger crashed: {str(e)}")
+            error_log = create_xml_log("ERROR", f"Logger crashed: {str(e)}")
             print("Logger crashed:", e)
             try:
                 publish_log(error_log)
