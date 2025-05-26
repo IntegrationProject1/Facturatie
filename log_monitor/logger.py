@@ -39,36 +39,39 @@ def monitor_container_logs(container):
     error_keywords = ["error", "err", "fatal", "critical", "exception"]
     warning_keywords = ["warn", "warning", "deprecated"]
 
-    print("Start logstream voor:", container.name)
+    print("Starting log stream for:", container.name)
     try:
         for line in container.logs(stream=True, follow=True):
             log_line = line.decode('utf-8').strip()
-            print("Log uit", container.name + ":", log_line)
+            print("Raw log from", container.name + ":", repr(log_line))  # Shows hidden characters
 
-            status = "INFO"
-            if any(word in log_line.lower() for word in error_keywords):
-                status = "ERROR"
-            elif any(word in log_line.lower() for word in warning_keywords):
-                status = "WARNING"
-
-                # Skip empty or useless logs
-            if not log_line.strip() or log_line.strip().lower() in ["info", "error", "warning"]:
-                print(f"Ignored non-informative log from {container.name}: '{log_line}'")
+            # Skip empty or non-informative logs early
+            normalized = log_line.strip().lower()
+            if normalized in ["", "info", "error", "warning", "deprecated"]:
+                print(f"[SKIPPED] Uninformative log from {container.name}: '{log_line}'")
                 continue
+
+            # Determine log status (only if informative)
+            status = "INFO"
+            if any(word in normalized for word in error_keywords):
+                status = "ERROR"
+            elif any(word in normalized for word in warning_keywords):
+                status = "WARNING"
 
             # Skip INFO logs to reduce log spam
             if status == "INFO":
-                # If you want to enable INFO logging again, just uncomment the two lines below
+                # Uncomment the next lines to allow INFO logs again
                 # xml_message = create_xml_log(status, f"{container.name}: {log_line}")
                 # publish_log(xml_message)
-                print(f"Skipped INFO log from {container.name}: {log_line}")
+                print(f"[SKIPPED] INFO log from {container.name}: {log_line}")
                 continue
 
+            # Send only ERROR and WARNING logs with real content
             xml_message = create_xml_log(status, f"{container.name}: {log_line}")
             publish_log(xml_message)
 
     except Exception as e:
-        print(f"Fout bij logstream {container.name}: {e}")
+        print(f"Error while streaming logs from {container.name}: {e}")
 
 def monitor_logs():
     print("Start met log monitoring...")
