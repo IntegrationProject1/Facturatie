@@ -4,6 +4,8 @@ import xml.etree.ElementTree as ET
 import time
 import os
 import threading
+from collections import defaultdict
+from time import time
 
 SERVICE_NAME = "Facturatie"
 EXCHANGE_NAME = "log_monitoring"
@@ -35,29 +37,44 @@ def publish_log(xml_message):
     except Exception as e:
         print("Fout bij verzenden naar RabbitMQ:", e)
 
+last_log_time = defaultdict(lambda: 0)
+
 def monitor_container_logs(container):
     error_keywords = ["error", "err", "fatal", "critical", "exception"]
     warning_keywords = ["warn", "warning", "deprecated"]
 
-    print("Start logstream voor:", container.name)
+    print("Starting log stream for:", container.name)
     try:
         for line in container.logs(stream=True, follow=True):
             log_line = line.decode('utf-8').strip()
-            print("Log uit", container.name + ":", log_line)
+            print(f"[RAW] {container.name}:", repr(log_line))
 
+            # Skip empty or generic lines
+            normalized = log_line.lower()
+            if normalized in ["", "info", "error", "warning", "deprecated"]:
+                print(f"[SKIPPED] Empty or generic log from {container.name}: '{log_line}'")
+                continue
+
+            # Throttle: 1 log per 5 seconds per container
+            now = time()
+            if now - last_log_time[container.name] < 5:
+                print(f"[THROTTLED] {container.name} log skipped to reduce spam.")
+                continue
+            last_log_time[container.name] = now
+
+            # Determine log status
             status = "INFO"
-            if any(word in log_line.lower() for word in error_keywords):
+            if any(word in normalized for word in error_keywords):
                 status = "ERROR"
-            elif any(word in log_line.lower() for word in warning_keywords):
+            elif any(word in normalized for word in warning_keywords):
                 status = "WARNING"
 
-            print(f"→ Status bepaald: {status} | Bericht: {log_line}")
             xml_message = create_xml_log(status, f"{container.name}: {log_line}")
             publish_log(xml_message)
 
     except Exception as e:
-        print(f"Fout bij logstream {container.name}: {e}")
-
+        print(f"Error while streaming logs from {container.name}: {e}")
+        
 def monitor_logs():
     print("Start met log monitoring...")
     client = docker.from_env()
@@ -100,7 +117,7 @@ if __name__ == "__main__":
             while True:
                 time.sleep(1)  # Hou de main-thread levend
         except Exception as e:
-            error_log = create_xml_log("CRITICAL", f"Logger crashed: {str(e)}")
+            error_log = create_xml_log("ERROR", f"Logger crashed: {str(e)}")
             print("Logger crashed:", e)
             try:
                 publish_log(error_log)
